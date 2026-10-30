@@ -49,7 +49,7 @@ Các quán cà phê/trà sữa quy mô nhỏ và vừa hiện nay chủ yếu nh
 | SH-03 | **Quản lý cửa hàng** | Chủ quán/quản lý, chịu trách nhiệm vận hành và doanh thu | Tăng doanh thu, giảm sai sót, kiểm soát menu và khuyến mãi | Quản lý sản phẩm, giá, tồn kho; xem đơn và doanh thu; cấu hình khuyến mãi/tích điểm | Cao | Cao |
 | SH-04 | **Giảng viên / khách hàng nghiệm thu** | Đánh giá sản phẩm và quy trình của nhóm | Kiểm tra sản phẩm đáp ứng đề bài và quy trình CNPM | Tài liệu đầy đủ, truy vết được, sản phẩm chạy được, có URL production, CI/CD hoạt động, lịch sử commit rõ ràng | Rất cao | Cao |
 | SH-05 | **Nhóm phát triển** | Sinh viên thực hiện dự án | Hoàn thành đúng hạn, học và áp dụng quy trình, đạt điểm tốt | Yêu cầu rõ ràng, phạm vi khả thi, công cụ ổn định, phân công công việc hợp lý | Cao | Rất cao |
-| SH-06 | **Đơn vị thanh toán** | Cổng/ví/ngân hàng xử lý giao dịch (mô phỏng trong MVP) | Giao dịch đúng, an toàn, không trùng lặp | Nhận yêu cầu thanh toán đúng định dạng, hỗ trợ idempotency, trả kết quả rõ ràng (thành công/thất bại), tuân thủ bảo mật | Trung bình | Thấp |
+| SH-06 | **Đơn vị thanh toán** | Cổng/ví/ngân hàng xử lý giao dịch. Trong phạm vi bài tập, được giả lập bằng một service nội bộ (Mock Payment) | Giao dịch đúng, không bị trùng lặp | Hệ thống BrewLite gọi API thanh toán giả lập đúng chuẩn và xử lý đúng kết quả trả về (thành công/thất bại) | Trung bình | Thấp |
 
 ### 2.2 Ma trận ưu tiên stakeholder
 
@@ -65,7 +65,7 @@ Các quán cà phê/trà sữa quy mô nhỏ và vừa hiện nay chủ yếu nh
 - **Quản lý:** kiểm soát menu, tồn kho, đơn hàng, khuyến mãi.
 - **Giảng viên:** đủ tạo phẩm, truy vết được, triển khai thật.
 - **Nhóm phát triển:** phạm vi vừa sức, kiểm soát được rủi ro.
-- **Đơn vị thanh toán:** giao dịch hợp lệ, không trùng lặp.
+- **Đơn vị thanh toán (Mock Payment):** nhận yêu cầu đúng chuẩn và trả về kết quả thành công/thất bại rõ ràng.
 
 ---
 
@@ -79,7 +79,7 @@ Các quán cà phê/trà sữa quy mô nhỏ và vừa hiện nay chủ yếu nh
 | IS-02 | Chi tiết sản phẩm | Xem chi tiết; chọn size và topping; hiển thị giá theo lựa chọn |
 | IS-03 | Giỏ hàng | Thêm, sửa số lượng, xóa món; tính tổng tiền |
 | IS-04 | Xác thực | Đăng ký, đăng nhập, xác thực bằng JWT; yêu cầu đăng nhập khi đặt đơn |
-| IS-05 | Đặt đơn | Tạo đơn từ giỏ hàng; kiểm tra tồn kho/hết hàng; tạo đơn và cập nhật tồn kho trong một transaction |
+| IS-05 | Đặt đơn | Hệ thống cho phép khách tạo đơn từ giỏ hàng và tự động trừ số lượng tồn kho tương ứng; ngăn chặn đặt hàng nếu sản phẩm đã hết hàng |
 | IS-06 | Thanh toán | Thanh toán Ví/Thẻ **mô phỏng**; xử lý thành công/thất bại; idempotency khi gửi lại yêu cầu |
 | IS-07 | Theo dõi đơn | Xác nhận đơn; xem trạng thái đơn; xem lịch sử đơn |
 | IS-08 | Quản lý trạng thái đơn | Nhân viên/quản lý cập nhật trạng thái (ví dụ: Chờ thanh toán → Đã thanh toán → Đang pha chế → Sẵn sàng → Hoàn tất / Hủy) |
