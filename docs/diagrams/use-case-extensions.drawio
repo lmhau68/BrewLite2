@@ -1,0 +1,65 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net">
+  <diagram name="BrewLite – Chức năng mở rộng (Could)" id="0">
+    <mxGraphModel dx="1776" dy="969" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1480" pageHeight="880" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="boundary" parent="1" style="rounded=0;verticalAlign=top;spacingTop=14;whiteSpace=wrap;html=0;fontSize=20;fontStyle=1;fillColor=none;strokeColor=#222222;strokeWidth=3;" value="BrewLite – Chức năng mở rộng (Could)" vertex="1">
+          <mxGeometry height="765" width="1020" x="240" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="edge0" edge="1" parent="1" source="customer" style="endArrow=none;startArrow=none;html=0;strokeWidth=1.5;strokeColor=#222222;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="uc11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge1" edge="1" parent="1" source="customer" style="endArrow=none;startArrow=none;html=0;strokeWidth=1.5;strokeColor=#222222;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="uc12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge2" edge="1" parent="1" source="customer" style="endArrow=none;startArrow=none;html=0;strokeWidth=1.5;strokeColor=#222222;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="uc15">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge3" edge="1" parent="1" source="customer" style="endArrow=none;startArrow=none;html=0;strokeWidth=1.5;strokeColor=#222222;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="uc16">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge4" edge="1" parent="1" source="manager" style="endArrow=none;startArrow=none;html=0;strokeWidth=1.5;strokeColor=#222222;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="uc13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge5" edge="1" parent="1" source="manager" style="endArrow=none;startArrow=none;html=0;strokeWidth=1.5;strokeColor=#222222;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="uc14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="uc11" parent="1" style="ellipse;whiteSpace=wrap;html=0;fontSize=14;strokeWidth=2;fillColor=#ffffff;strokeColor=#222222;" value="UC-11 · Áp dụng mã khuyến mãi&#10;«Could»" vertex="1">
+          <mxGeometry height="80" width="360" x="360" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="uc12" parent="1" style="ellipse;whiteSpace=wrap;html=0;fontSize=14;strokeWidth=2;fillColor=#ffffff;strokeColor=#222222;" value="UC-12 · Nhận và xem điểm tích lũy&#10;«Could»" vertex="1">
+          <mxGeometry height="80" width="360" x="360" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="uc15" parent="1" style="ellipse;whiteSpace=wrap;html=0;fontSize=14;strokeWidth=2;fillColor=#ffffff;strokeColor=#222222;" value="UC-15 · Tự cập nhật trạng thái&#10;«Could»" vertex="1">
+          <mxGeometry height="80" width="360" x="360" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="uc16" parent="1" style="ellipse;whiteSpace=wrap;html=0;fontSize=14;strokeWidth=2;fillColor=#ffffff;strokeColor=#222222;" value="UC-16 · Cài PWA, menu offline&#10;«Could»" vertex="1">
+          <mxGeometry height="80" width="360" x="360" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="uc13" parent="1" style="ellipse;whiteSpace=wrap;html=0;fontSize=14;strokeWidth=2;fillColor=#ffffff;strokeColor=#222222;" value="UC-13 · Quản trị sản phẩm, tồn kho&#10;«Could»" vertex="1">
+          <mxGeometry height="80" width="360" x="790" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="uc14" parent="1" style="ellipse;whiteSpace=wrap;html=0;fontSize=14;strokeWidth=2;fillColor=#ffffff;strokeColor=#222222;" value="UC-14 · Xem doanh thu&#10;«Could»" vertex="1">
+          <mxGeometry height="80" width="360" x="790" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="customer" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=0;fontSize=14;fontStyle=1;strokeWidth=2;" value="Khách hàng" vertex="1">
+          <mxGeometry height="110" width="50" x="85" y="285" as="geometry" />
+        </mxCell>
+        <mxCell id="manager" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=0;fontSize=14;fontStyle=1;strokeWidth=2;" value="Quản lý cửa hàng" vertex="1">
+          <mxGeometry height="110" width="50" x="1325" y="325" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" parent="1" style="text;html=0;align=center;whiteSpace=wrap;fontSize=14;" value="Chỉ triển khai nếu đủ thời gian · Quyền đăng nhập của các actor được thể hiện trong sơ đồ MVP" vertex="1">
+          <mxGeometry height="35" width="1120" x="180" y="825" as="geometry" />
+        </mxCell>
+        <mxCell id="uc17" value="UC-17 · Yêu thích và đặt lại đơn&#10;«Could»" style="ellipse;whiteSpace=wrap;html=0;fontSize=14;strokeWidth=2;fillColor=#ffffff;strokeColor=#222222;" vertex="1" parent="1">
+          <mxGeometry x="360" y="620" width="360" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="edge_customer_uc17" edge="1" parent="1" source="customer" target="uc17" style="endArrow=none;startArrow=none;html=0;strokeWidth=1.5;strokeColor=#222222;exitX=1;exitY=0.5;entryX=0;entryY=0.5;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
