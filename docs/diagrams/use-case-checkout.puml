@@ -1,15 +1,15 @@
-@startuml use_case_checkout
+@startuml use-case-checkout
 left to right direction
 
 actor "Khách hàng" as Customer
+actor "Dịch vụ thanh toán\n(Mock)" as MockPayment
 
-rectangle "BrewLite" {
-  usecase "Đặt và thanh toán\nđơn hàng\n(UC-06 + UC-07)" as Checkout
+rectangle "Đặt đơn và thanh toán" {
+  usecase "UC-06\nĐặt đơn" as PlaceOrder
+  usecase "UC-07\nThanh toán mô phỏng" as Payment
 }
 
-Customer -- Checkout
-
-note top of Checkout
-  Liên quan: FR-06 đến FR-11
-end note
+Customer -- PlaceOrder
+Payment -- MockPayment
+PlaceOrder ..> Payment : <<include>>
 @enduml
