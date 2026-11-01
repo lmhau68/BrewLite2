@@ -1,0 +1,15 @@
+@startuml
+left to right direction
+
+actor "Khách hàng" as Customer
+
+rectangle "BrewLite" {
+  usecase "Đặt và thanh toán\nđơn hàng\n(UC-06 + UC-07)" as Checkout
+}
+
+Customer -- Checkout
+
+note top of Checkout
+  Liên quan: FR-06 đến FR-11
+end note
+@enduml
