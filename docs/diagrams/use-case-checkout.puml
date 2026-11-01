@@ -1,0 +1,15 @@
+@startuml use-case-checkout
+left to right direction
+
+actor "Khách hàng" as Customer
+actor "Dịch vụ thanh toán\n(Mock)" as MockPayment
+
+rectangle "Đặt đơn và thanh toán" {
+  usecase "UC-06\nĐặt đơn" as PlaceOrder
+  usecase "UC-07\nThanh toán mô phỏng" as Payment
+}
+
+Customer -- PlaceOrder
+Payment -- MockPayment
+PlaceOrder ..> Payment : <<include>>
+@enduml
