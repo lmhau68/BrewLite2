@@ -1,0 +1,100 @@
+@startuml
+title Activity Diagram - Luồng đặt hàng end-to-end (BrewLite)
+
+|Khách hàng|
+start
+:Chọn món trên thực đơn;
+|Menu (Next.js)|
+:Tải danh sách món\nGET /products;
+|API (NestJS)|
+:ProductsService lọc theo\ncategory / từ khoá "q";
+|PostgreSQL (Prisma)|
+:Đọc bảng Product;
+|API (NestJS)|
+:Trả về danh sách món;
+|Menu (Next.js)|
+:Hiển thị 3 trạng thái:\nLoading / Menu / Empty-Error;
+|Khách hàng|
+:Mở chi tiết sản phẩm,\nchọn size S/M/L, chọn topping,\nsố lượng;
+|Menu (Next.js)|
+:Tính giá tạm (đơn vị, tổng dòng)\nvà lưu vào giỏ hàng\n(localStorage);
+|Khách hàng|
+:Bấm "Thanh toán", nhập\ntên - SĐT - địa chỉ - ghi chú\n(và mã khuyến mãi nếu có);
+|Menu (Next.js)|
+:Kiểm tra dữ liệu nhập;
+if (Dữ liệu nhập hợp lệ?) then (Không)
+  #HotPink:Hiển thị lỗi tại ô tương ứng,\nkhách nhập lại;
+  |Khách hàng|
+  #HotPink:Nhập lại thông tin;
+  |Menu (Next.js)|
+else (Có)
+endif
+|Menu (Next.js)|
+:Gửi POST /orders\n(không gửi giá, chỉ gửi\nproductId + size + toppingId + qty);
+|API (NestJS)|
+:ValidationPipe kiểm tra DTO;
+if (DTO sai?) then (Sai)
+  #HotPink:Trả 400 Bad Request;
+  |Menu (Next.js)|
+  #HotPink:Hiển thị lỗi từ server;
+else (Đúng)
+endif
+|API (NestJS)|
+:Mở transaction (Serializable),\ntính giá lại từ server\n(catalog size + topping);
+if (Thiếu tồn kho?) then (Có)
+  #HotPink:Trả 409 Conflict\n"Tồn kho vừa thay đổi";
+  |Menu (Next.js)|
+  #HotPink:Báo khách chọn lại món khác;
+else (Không)
+endif
+|API (NestJS)|
+:Kiểm tra mã khuyến mãi\n(đang hiệu lực, đủ điều kiện,\nchưa hết lượt dùng);\nTrừ 1 lượt dùng;
+|API (NestJS)|
+:Tạo Order status = PENDING\n(+ OrderItem, trừ kho Product);
+|API (NestJS)|
+:Trả về Order đã tạo;
+|Menu (Next.js)|
+:Chuyển sang bước 2 -\nChọn phương thức thanh toán\n(Ví điện tử / Thẻ ngân hàng);
+|Khách hàng|
+:Nhập thông tin thẻ\n(nếu chọn thẻ ngân hàng);
+|Menu (Next.js)|
+:Kiểm tra 4 trường thẻ\n(số thẻ, chủ thẻ, hạn, CVV);
+if (Thẻ hợp lệ?) then (Không)
+  #HotPink:Báo lỗi, không gọi API;
+  |Khách hàng|
+  #HotPink:Nhập lại thông tin thẻ;
+  |Menu (Next.js)|
+else (Có)
+endif
+|Menu (Next.js)|
+:Gửi POST /payments\nkèm header Idempotency-Key\n(một khoá duy nhất cho cả đơn);
+|API (NestJS)|
+:PaymentsService tra cứu\ntheo idempotencyKey;
+if (Khoá đã tồn tại?) then (Có)
+  #HotPink:Trả lại kết quả cũ\n(isIdempotent = true,\nkhông tạo giao dịch mới);
+  |Menu (Next.js)|
+else (Không)
+endif
+|API (NestJS)|
+:Kiểm tra trạng thái đơn\n(PENDING / PAYMENT_FAILED)\nvà amount khớp tổng đơn;
+|Cổng thanh toán giả lập|
+:Xử lý giao dịch giả lập\n(theo cờ mockSuccess);
+if (Thanh toán thành công?) then (Có)
+  #LightGreen:Order sang trạng thái PAID\nPayment sang SUCCEEDED\nCấp điểm tích lũy nếu có tài khoản;
+else (Không)
+  #HotPink:Order sang trạng thái PAYMENT_FAILED\nPayment sang FAILED\n(ghi nhận lý do từ chối);
+endif
+|API (NestJS)|
+:Trả về kết quả thanh toán;
+|Menu (Next.js)|
+if (Thanh toán thành công?) then (Có)
+  #LightGreen:Xoá giỏ hàng\nXoá dữ liệu local của khách vãng lai\n(clearGuestData) để bảo vệ riêng tư;\nHiển thị màn "Đặt đơn xong" + điểm thưởng;
+else (Không)
+  #HotPink:Hiển thị lỗi,\ncho phép thử lại với khoá mới;
+endif
+|Khách hàng|
+:Xem lịch sử / theo dõi đơn\nGET /orders, GET /orders/:id;
+|Menu (Next.js)|
+:Hiển thị trạng thái đơn\n(badge trạng thái);
+stop
+@enduml

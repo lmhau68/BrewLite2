@@ -1,0 +1,30 @@
+@startuml
+title Activity Diagram - Vòng đời trạng thái đơn hàng (Order State Machine)
+
+|Hệ thống (API NestJS)|
+start
+:POST /orders tạo Order\nvới status = PENDING\n(giữ chỗ tồn kho);
+|Thanh toán (PaymentsService)|
+:POST /payments kèm Idempotency-Key;
+if (Kết quả giao dịch?) then (Thành công)
+  #LightGreen:Order chuyển sang PAID;
+else (Thất bại)
+  #HotPink:Order chuyển sang PAYMENT_FAILED;
+endif
+|Nhân viên quản lý|
+:PATCH /orders/:id/status\n(yêu cầu chuyển trạng thái);
+|OrdersService|
+:Kiểm tra trạng thái hiện tại\ncó nằm trong bảng chuyển hợp lệ?;
+if (Chuyển trạng thái hợp lệ?) then (Có)
+  if (Trạng thái đích là CANCELLED?) then (Có)
+    #HotPink:Order chuyển sang CANCELLED\nHoàn lại tồn kho cho từng món\nvà trả 1 lượt dùng mã khuyến mãi;
+  else (Không)
+    #LightGreen:Cập nhật trạng thái đơn\n(optimistic lock: status + version)\nPAID - PREPARING - READY - COMPLETED;
+  endif
+else (Không)
+  #HotPink:Trả 400 Bad Request\n"Không thể chuyển đơn hàng từ\ntrạng thái hiện tại sang trạng thái đích";
+endif
+|Khách hàng|
+:Xem trạng thái đơn tại\nLịch sử đơn / Chi tiết đơn\n(GET /orders, GET /orders/:id);
+stop
+@enduml
