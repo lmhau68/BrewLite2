@@ -1,8 +1,8 @@
 # Đặc tả use-case: Đặt đơn và thanh toán
 
-> Tài liệu này đặc tả UC-06 và UC-07 theo hai biểu mẫu riêng. UC-06 luôn gọi UC-07 qua quan hệ `<<include>>`; sơ đồ và đặc tả chi tiết UC-07 ở bên dưới.
+> Tài liệu này đặc tả UC-04 và UC-05 theo hai biểu mẫu riêng, đồng bộ với SRS hiện tại. UC-04 gọi UC-05 qua quan hệ `<<include>>`; sơ đồ và đặc tả chi tiết UC-05 ở bên dưới.
 
-## UC-06 – Đặt đơn
+## UC-04 – Đặt đơn hàng
 
 - **Actor chính:** Khách hàng
 - **Actor phụ:** Không có
@@ -12,28 +12,28 @@
   1. Khách hàng đã đăng nhập.
   2. Giỏ hàng có ít nhất một món.
 - **Điều kiện sau:**
-  - **Thành công:** Đơn cùng các dòng món được lưu, tồn kho được trừ nhất quán, đơn có trạng thái `PENDING`; hệ thống kích hoạt UC-07 để thanh toán.
+  - **Thành công:** Đơn cùng các dòng món được lưu, tồn kho được trừ nhất quán, đơn có trạng thái `PENDING`; hệ thống kích hoạt UC-05 để thanh toán.
   - **Thất bại:** Không tạo đơn dở dang và không trừ tồn kho một phần; khách hàng được thông báo lỗi.
 - **Luồng chính:**
   1. Khách hàng mở giỏ hàng và chọn “Đặt hàng”.
   2. Hệ thống kiểm tra sản phẩm, tùy chọn, giá và tồn kho hiện tại; giá được tính từ dữ liệu phía máy chủ.
   3. Hệ thống tạo đơn cùng các dòng món và trừ tồn kho trong cùng một giao dịch; đơn có trạng thái `PENDING`.
   4. Hệ thống hiển thị mã đơn, các món và tổng tiền.
-  5. Hệ thống kích hoạt UC-07 (Thanh toán mô phỏng) thông qua quan hệ `<<include>>`.
+  5. Hệ thống kích hoạt UC-05 (Thanh toán đơn hàng mô phỏng) thông qua quan hệ `<<include>>`.
 - **Luồng thay thế / ngoại lệ E1 – Giá, tùy chọn hoặc tồn kho không hợp lệ:**
   1. Tại bước 2, hệ thống phát hiện giá/tùy chọn đã thay đổi hoặc món không đủ tồn kho.
   2. Hệ thống từ chối tạo đơn, không trừ tồn kho một phần và thông báo cho khách hàng.
 - **Liên kết yêu cầu:** FR-07, FR-08; BR-01, BR-02, BR-05.
 
-## UC-07 – Thanh toán mô phỏng
+## UC-05 – Thanh toán đơn hàng mô phỏng
 
 - **Actor chính:** Khách hàng
-- **Actor phụ:** Dịch vụ thanh toán (Mock), trả kết quả thanh toán mô phỏng. Actor này thể hiện dịch vụ bên ngoài trong mô hình use-case; mã nguồn hiện tại mô phỏng kết quả thanh toán ở backend.
+- **Actor phụ:** Đơn vị thanh toán (Mock), trả kết quả thanh toán mô phỏng. Actor này thể hiện vai trò thanh toán trong sơ đồ; theo SRS, dịch vụ mô phỏng nằm trong ranh giới BrewLite và được xử lý bằng backend, không kết nối cổng thanh toán thật.
 - **Mục tiêu:** Ghi nhận thanh toán Ví hoặc Thẻ mô phỏng cho đơn hàng.
-- **Kích hoạt:** UC-06 gọi UC-07 sau khi tạo đơn; khách hàng chọn Ví hoặc Thẻ mô phỏng.
+- **Kích hoạt:** UC-04 gọi UC-05 sau khi tạo đơn; khách hàng chọn Ví hoặc Thẻ mô phỏng.
 - **Điều kiện trước:**
   1. Khách hàng đã đăng nhập và là chủ đơn.
-  2. Đơn hàng ở trạng thái `PENDING` khi bắt đầu thanh toán.
+  2. Đơn hàng thuộc khách hàng và ở trạng thái `PENDING` khi thanh toán lần đầu hoặc `PAYMENT_FAILED` khi thử lại sau thất bại xác định.
 - **Điều kiện sau:**
   - **Thành công:** Giao dịch được ghi nhận; đơn chuyển sang `PAID`; giỏ hàng được cập nhật đúng một lần.
   - **Thất bại xác định:** Đơn chuyển sang `PAYMENT_FAILED`; giỏ hàng được giữ nguyên và khách hàng có thể thử lại trên cùng đơn bằng khóa thanh toán mới.
@@ -68,6 +68,6 @@
 
 ## Truy vết liên quan
 
-- **Use-case SRS:** UC-05 Đăng nhập/đăng xuất; UC-06 Đặt đơn; UC-07 Thanh toán mô phỏng; UC-08 Xem xác nhận và theo dõi đơn.
+- **Use-case SRS:** UC-03 Quản lý tài khoản (đăng ký, đăng nhập, đăng xuất); UC-04 Đặt đơn hàng; UC-05 Thanh toán đơn hàng mô phỏng; UC-06 Theo dõi và xem lịch sử đơn.
 - **Yêu cầu chức năng:** FR-06 (đăng nhập và JWT), FR-07 (tạo đơn, kiểm tra giá/tồn kho), FR-08 (tính nhất quán đơn và tồn kho), FR-09 (thanh toán mô phỏng), FR-10 (chống thanh toán trùng), FR-11 (xác nhận và theo dõi đơn).
 - **Quy tắc nghiệp vụ:** BR-01 (tính giá), BR-02 (tồn kho), BR-03 (hủy đơn đồng thời với thanh toán), BR-04 (timeout và tra cứu giao dịch), BR-05 (chống tạo đơn trùng).
