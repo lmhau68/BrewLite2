@@ -1,12 +1,13 @@
 @startuml use-case-checkout
 left to right direction
+skinparam nodesep 70
 
 actor "Khách hàng" as Customer
-actor "Dịch vụ thanh toán\n(Mock)" as MockPayment
+actor "Đơn vị thanh toán\n(Mock)" as MockPayment
 
 rectangle "Đặt đơn và thanh toán" {
-  usecase "UC-06\nĐặt đơn" as PlaceOrder
-  usecase "UC-07\nThanh toán mô phỏng" as Payment
+  usecase "UC-04\nĐặt đơn hàng" as PlaceOrder
+  usecase "UC-05\nThanh toán đơn hàng mô phỏng" as Payment
 }
 
 Customer -- PlaceOrder
