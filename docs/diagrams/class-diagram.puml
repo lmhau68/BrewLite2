@@ -55,6 +55,20 @@ class Product {
   + DateTime updatedAt
 }
 
+class ProductSize {
+  + String id
+  + String productId
+  + String sizeName
+  + Float price
+}
+
+class Topping {
+  + String id
+  + String name
+  + Float price
+  + Integer stockQuantity
+}
+
 class Order {
   + String id
   + String orderCode
@@ -71,10 +85,9 @@ class OrderItem {
   + String id
   + String orderId
   + String productId
+  + String sizeId
   + Integer quantity
   + Float unitPrice
-  + String selectedSize
-  + String selectedToppings
   + Float subtotal
 }
 
@@ -117,6 +130,10 @@ User "1" --> "0..*" Order : places >
 User "1" --> "0..*" LoyaltyTransaction : has >
 Order "1" *-- "1..*" OrderItem : contains >
 Product "1" --> "0..*" OrderItem : referenced in >
+Product "1" --> "0..*" ProductSize : has sizes >
+Product "1" --> "0..*" Topping : supports options >
+OrderItem "1" --> "1" ProductSize : has size >
+OrderItem "0..*" --> "0..*" Topping : includes toppings >
 Order "1" --> "0..1" Payment : paid by >
 Order "0..*" --> "0..1" Promotion : applies >
 Order "1" --> "0..1" LoyaltyTransaction : generates >
