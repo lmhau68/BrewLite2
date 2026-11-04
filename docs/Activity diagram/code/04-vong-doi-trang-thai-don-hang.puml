@@ -1,5 +1,5 @@
 @startuml
-title Activity Diagram - Vòng đời trạng thái đơn hàng (Order State Machine)
+title Activity Diagram - Vòng đời trạng thái đơn hàng 
 
 |Hệ thống (API NestJS)|
 start
