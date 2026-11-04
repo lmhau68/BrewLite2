@@ -1,0 +1,185 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="2070" viewBox="0 0 1400 2070" role="img" aria-labelledby="title desc">
+  <title id="title">Task 2.2 sequence diagram: placing an order and simulated payment</title>
+  <desc id="desc">Sequence among Customer, Next.js UI, NestJS API, PostgreSQL Database, and the mock Payment Service. Shows order creation transaction, JWT validation, payment idempotency, success, failure, and timeout handling.</desc>
+  <defs>
+    <marker id="callArrow" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L9 4 L0 8 z" fill="#31465a"/></marker>
+    <marker id="returnArrow" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L9 4 L0 8 z" fill="#687787"/></marker>
+    <style>
+      .participant { fill:#f2f6fa; stroke:#334b60; stroke-width:1.5; }
+      .lifeline { stroke:#8b98a5; stroke-width:1.2; stroke-dasharray:6 5; }
+      .call { stroke:#31465a; stroke-width:1.5; fill:none; marker-end:url(#callArrow); }
+      .return { stroke:#687787; stroke-width:1.3; stroke-dasharray:6 4; fill:none; marker-end:url(#returnArrow); }
+      .frame { fill:#fbfdff; stroke:#546a7e; stroke-width:1.3; }
+      .frameHead { fill:#e9f0f6; }
+      .sep { stroke:#8c9aa7; stroke-width:1; }
+      .label { font:13px Arial,sans-serif; fill:#17212b; text-anchor:middle; }
+      .small { font:12px Arial,sans-serif; fill:#17212b; text-anchor:middle; }
+      .title { font:bold 20px Arial,sans-serif; fill:#142330; text-anchor:middle; }
+      .phase { font:bold 16px Arial,sans-serif; fill:#18334a; }
+      .frag { font:bold 12px Arial,sans-serif; fill:#18334a; }
+      .headText { font:bold 14px Arial,sans-serif; fill:#142330; text-anchor:middle; }
+      .note { fill:#fff9e8; stroke:#b1974b; stroke-width:1; }
+      .actor { stroke:#334b60; stroke-width:1.5; fill:none; }
+    </style>
+  </defs>
+  <rect width="1400" height="2070" fill="#ffffff"/>
+  <text id="titleText" class="title" x="700" y="28">Task 2.2 — Đặt đơn và thanh toán mô phỏng</text>
+
+  <!-- Participants -->
+  <g class="actor">
+    <circle cx="110" cy="51" r="9"/>
+    <path d="M110 60v18 M98 67h24 M110 78l-11 12 M110 78l11 12"/>
+  </g>
+  <text class="headText" x="110" y="109">Customer</text>
+  <rect class="participant" x="270" y="42" width="200" height="48" rx="5"/>
+  <text class="headText" x="370" y="71">Next.js UI</text>
+  <rect class="participant" x="540" y="42" width="200" height="48" rx="5"/>
+  <text class="headText" x="640" y="71">NestJS API</text>
+  <rect class="participant" x="810" y="42" width="200" height="48" rx="5"/>
+  <text class="headText" x="910" y="64">Database</text>
+  <text class="small" x="910" y="81">(PostgreSQL)</text>
+  <rect class="participant" x="1080" y="42" width="200" height="48" rx="5"/>
+  <text class="headText" x="1180" y="63">Payment Service</text>
+  <text class="small" x="1180" y="81">(Mock)</text>
+  <line class="lifeline" x1="110" y1="112" x2="110" y2="2018"/>
+  <line class="lifeline" x1="370" y1="95" x2="370" y2="2018"/>
+  <line class="lifeline" x1="640" y1="95" x2="640" y2="2018"/>
+  <line class="lifeline" x1="910" y1="95" x2="910" y2="2018"/>
+  <line class="lifeline" x1="1180" y1="95" x2="1180" y2="2018"/>
+
+  <!-- UC-04 order placement -->
+  <text class="phase" x="35" y="137">UC-04 — Đặt đơn hàng</text>
+  <line class="call" x1="125" y1="158" x2="355" y2="158"/>
+  <text class="label" x="240" y="151">Chọn “Đặt hàng”</text>
+  <line class="call" x1="385" y1="192" x2="625" y2="192"/>
+  <text class="label" x="505" y="184">POST /orders: JWT, giỏ hàng, Order Idempotency-Key</text>
+  <path class="call" d="M640 210 C690 210 690 235 640 235"/>
+  <text class="small" x="716" y="218">Xác thực JWT; kiểm tra quyền, món, tùy chọn, số lượng, giá</text>
+
+  <rect class="frame" x="265" y="249" width="1000" height="596"/>
+  <rect class="frameHead" x="265" y="249" width="1000" height="27"/>
+  <text class="frag" x="278" y="267">alt — JWT hoặc dữ liệu đơn không hợp lệ</text>
+  <line class="return" x1="640" y1="296" x2="385" y2="296"/>
+  <text class="small" x="512" y="289">401/400 — từ chối; chưa tạo đơn</text>
+  <line class="return" x1="370" y1="326" x2="125" y2="326"/>
+  <text class="small" x="247" y="319">Yêu cầu đăng nhập hoặc hiển thị lỗi</text>
+  <line class="sep" x1="265" y1="348" x2="1265" y2="348"/>
+  <text class="frag" x="278" y="370">else — Yêu cầu hợp lệ</text>
+  <line class="call" x1="655" y1="392" x2="895" y2="392"/>
+  <text class="small" x="775" y="385">BEGIN transaction</text>
+  <line class="call" x1="655" y1="423" x2="895" y2="423"/>
+  <text class="small" x="775" y="416">Kiểm tra key; đọc giá, tùy chọn và tồn kho hiện tại</text>
+
+  <rect class="frame" x="290" y="440" width="950" height="382"/>
+  <rect class="frameHead" x="290" y="440" width="950" height="26"/>
+  <text class="frag" x="303" y="458">alt — Order Idempotency-Key đã được xử lý</text>
+  <line class="return" x1="895" y1="485" x2="655" y2="485"/>
+  <text class="small" x="775" y="478">Trả về đơn cũ; không tạo thêm đơn hoặc trừ kho</text>
+  <line class="call" x1="655" y1="512" x2="895" y2="512"/>
+  <text class="small" x="775" y="505">ROLLBACK transaction đọc</text>
+  <line class="return" x1="640" y1="539" x2="385" y2="539"/>
+  <text class="small" x="512" y="532">Trả lại kết quả đơn đã có</text>
+  <line class="return" x1="370" y1="566" x2="125" y2="566"/>
+  <text class="small" x="247" y="559">Hiển thị đơn đã có</text>
+  <line class="sep" x1="290" y1="588" x2="1240" y2="588"/>
+  <text class="frag" x="303" y="610">else — Khóa mới</text>
+  <line class="call" x1="655" y1="632" x2="895" y2="632"/>
+  <text class="small" x="775" y="625">Lưu PENDING + dòng món; trừ tồn kho có điều kiện</text>
+  <rect class="note" x="705" y="646" width="430" height="38" rx="4"/>
+  <text class="small" x="920" y="670">Tạo đơn, dòng món và trừ kho nằm trong cùng transaction</text>
+  <rect class="frame" x="310" y="692" width="900" height="116"/>
+  <rect class="frameHead" x="310" y="692" width="900" height="25"/>
+  <text class="frag" x="323" y="710">alt — Giá/tùy chọn sai hoặc tồn kho không đủ</text>
+  <line class="call" x1="655" y1="739" x2="895" y2="739"/>
+  <text class="small" x="775" y="732">ROLLBACK — không để lại đơn/kho bị cập nhật một phần</text>
+  <line class="return" x1="640" y1="765" x2="385" y2="765"/>
+  <text class="small" x="512" y="758">Từ chối tạo đơn</text>
+  <line class="sep" x1="310" y1="780" x2="1210" y2="780"/>
+  <text class="frag" x="323" y="800">else — Giá hợp lệ, đủ tồn kho: COMMIT → trả mã đơn/tổng → UI xác nhận PENDING</text>
+
+  <!-- UC-05 payment -->
+  <text class="phase" x="35" y="879">UC-05 — Thanh toán đơn hàng mô phỏng</text>
+  <line class="call" x1="125" y1="902" x2="355" y2="902"/>
+  <text class="label" x="240" y="895">Chọn Ví/Thẻ mô phỏng</text>
+  <line class="call" x1="385" y1="937" x2="625" y2="937"/>
+  <text class="label" x="505" y="930">POST /orders/{id}/payments: JWT, method, Payment Idempotency-Key</text>
+  <path class="call" d="M640 955 C690 955 690 980 640 980"/>
+  <text class="small" x="720" y="964">Xác thực JWT, chủ đơn; chỉ PENDING/PAYMENT_FAILED</text>
+  <line class="call" x1="655" y1="1004" x2="895" y2="1004"/>
+  <text class="small" x="775" y="997">Tra cứu Payment Idempotency-Key</text>
+
+  <rect class="frame" x="265" y="1020" width="1000" height="988"/>
+  <rect class="frameHead" x="265" y="1020" width="1000" height="27"/>
+  <text class="frag" x="278" y="1038">alt — Cùng key, cùng payload</text>
+  <line class="return" x1="895" y1="1066" x2="655" y2="1066"/>
+  <text class="small" x="775" y="1059">Trả trạng thái/kết quả đã lưu; không gọi Payment Service lần nữa</text>
+  <line class="return" x1="640" y1="1094" x2="385" y2="1094"/>
+  <text class="small" x="512" y="1087">Trả lại cùng kết quả</text>
+  <line class="return" x1="370" y1="1122" x2="125" y2="1122"/>
+  <text class="small" x="247" y="1115">Hiển thị kết quả hiện có</text>
+  <line class="sep" x1="265" y1="1143" x2="1265" y2="1143"/>
+  <text class="frag" x="278" y="1165">else — Cùng key nhưng payload khác</text>
+  <line class="return" x1="895" y1="1192" x2="655" y2="1192"/>
+  <text class="small" x="775" y="1185">Key conflict</text>
+  <line class="return" x1="640" y1="1220" x2="385" y2="1220"/>
+  <text class="small" x="512" y="1213">409 Conflict — từ chối</text>
+  <line class="return" x1="370" y1="1248" x2="125" y2="1248"/>
+  <text class="small" x="247" y="1241">Báo yêu cầu không hợp lệ</text>
+  <line class="sep" x1="265" y1="1269" x2="1265" y2="1269"/>
+  <text class="frag" x="278" y="1291">else — Khóa mới</text>
+  <line class="call" x1="655" y1="1318" x2="895" y2="1318"/>
+  <text class="small" x="775" y="1311">Lưu payment attempt PROCESSING</text>
+  <line class="return" x1="655" y1="1346" x2="895" y2="1346"/>
+  <text class="small" x="775" y="1339">Attempt đã được ghi nhận</text>
+  <line class="call" x1="655" y1="1374" x2="1165" y2="1374"/>
+  <text class="small" x="910" y="1367">Gửi yêu cầu thanh toán mô phỏng + idempotency key</text>
+
+  <rect class="frame" x="290" y="1392" width="950" height="594"/>
+  <rect class="frameHead" x="290" y="1392" width="950" height="26"/>
+  <text class="frag" x="303" y="1410">alt — Kết quả Payment Service</text>
+  <text class="frag" x="315" y="1434">[Thành công]</text>
+  <line class="return" x1="1165" y1="1455" x2="655" y2="1455"/>
+  <text class="small" x="910" y="1448">Success + transaction ID</text>
+  <line class="call" x1="655" y1="1482" x2="895" y2="1482"/>
+  <text class="small" x="775" y="1475">BEGIN; ghi giao dịch; order = PAID; COMMIT</text>
+  <line class="return" x1="895" y1="1509" x2="655" y2="1509"/>
+  <text class="small" x="775" y="1502">Commit confirmed</text>
+  <line class="return" x1="640" y1="1536" x2="385" y2="1536"/>
+  <text class="small" x="512" y="1529">Trả PAID</text>
+  <path class="call" d="M370 1552 C420 1552 420 1575 370 1575"/>
+  <text class="small" x="472" y="1562">Xóa đúng số lượng đã đặt một lần; giữ món thêm sau đó</text>
+  <line class="return" x1="370" y1="1592" x2="125" y2="1592"/>
+  <text class="small" x="247" y="1585">Hiển thị xác nhận thanh toán</text>
+  <line class="sep" x1="290" y1="1613" x2="1240" y2="1613"/>
+  <text class="frag" x="315" y="1635">else [Thất bại xác định]</text>
+  <line class="return" x1="1165" y1="1657" x2="655" y2="1657"/>
+  <text class="small" x="910" y="1650">Failure</text>
+  <line class="call" x1="655" y1="1684" x2="895" y2="1684"/>
+  <text class="small" x="775" y="1677">Lưu PAYMENT_FAILED; giữ nguyên giỏ hàng</text>
+  <line class="return" x1="640" y1="1711" x2="385" y2="1711"/>
+  <text class="small" x="512" y="1704">Báo lỗi; cùng đơn có thể thử lại với key mới</text>
+  <line class="return" x1="370" y1="1738" x2="125" y2="1738"/>
+  <text class="small" x="247" y="1731">Hiển thị thanh toán thất bại</text>
+  <line class="sep" x1="290" y1="1759" x2="1240" y2="1759"/>
+  <text class="frag" x="315" y="1781">else [Timeout / chưa xác định]</text>
+  <line class="return" x1="1165" y1="1803" x2="655" y2="1803"/>
+  <text class="small" x="910" y="1796">Không có kết quả chắc chắn</text>
+  <line class="call" x1="655" y1="1830" x2="1165" y2="1830"/>
+  <text class="small" x="910" y="1823">Tra cứu giao dịch theo key hiện có</text>
+
+  <rect class="frame" x="310" y="1844" width="900" height="130"/>
+  <rect class="frameHead" x="310" y="1844" width="900" height="24"/>
+  <text class="frag" x="323" y="1861">alt — Kết quả tra cứu</text>
+  <line class="return" x1="1165" y1="1884" x2="655" y2="1884"/>
+  <text class="small" x="910" y="1878">Thành công → lưu PAID một lần; thông báo khách</text>
+  <line class="sep" x1="310" y1="1898" x2="1210" y2="1898"/>
+  <line class="return" x1="1165" y1="1918" x2="655" y2="1918"/>
+  <text class="small" x="910" y="1912">Thất bại → lưu PAYMENT_FAILED, giữ giỏ; thử lại cùng đơn bằng key mới</text>
+  <line class="sep" x1="310" y1="1931" x2="1210" y2="1931"/>
+  <line class="call" x1="655" y1="1951" x2="895" y2="1951"/>
+  <text class="small" x="775" y="1945">Vẫn chưa rõ → giữ PROCESSING/unknown</text>
+  <line class="return" x1="640" y1="1978" x2="385" y2="1978"/>
+  <text class="small" x="512" y="1972">Báo chưa xác định; chưa cho thử lại/hủy</text>
+
+  <text class="small" x="700" y="2043">Payment Service là mô phỏng; không thu tiền thật hoặc nhận dữ liệu thẻ thật.</text>
+</svg>

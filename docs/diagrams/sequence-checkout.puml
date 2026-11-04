@@ -1,0 +1,127 @@
+@startuml sequence-checkout
+title Task 2.2 - Sequence diagram: Đặt đơn và thanh toán
+
+autonumber
+hide footbox
+skinparam responseMessageBelowArrow true
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 28
+skinparam BoxPadding 10
+
+actor Customer
+boundary "Next.js UI" as UI
+control "NestJS API" as API
+database "Database\n(PostgreSQL)" as DB
+participant "Payment Service\n(Mock)" as Payment
+
+== UC-04: Đặt đơn hàng ==
+Customer -> UI: Chọn "Đặt hàng"
+UI -> API: POST /orders\nJWT + giỏ hàng + Order Idempotency-Key
+activate API
+API -> API: Xác thực JWT; kiểm tra dữ liệu,
+API -> API: quyền sở hữu, món, tùy chọn,
+API -> API: số lượng và giá phía máy chủ
+
+alt JWT không hợp lệ hoặc dữ liệu không hợp lệ
+  API --> UI: 401/400; từ chối, không tạo đơn
+  UI --> Customer: Yêu cầu đăng nhập hoặc báo lỗi dữ liệu
+else Yêu cầu hợp lệ
+  API -> DB: BEGIN transaction
+  API -> DB: Kiểm tra Order Idempotency-Key;
+  API -> DB: đọc giá, tùy chọn và tồn kho hiện tại
+  alt Khóa tạo đơn đã được xử lý
+    DB --> API: Trả về đơn đã có;
+    DB --> API: không trừ tồn kho lần nữa
+    API -> DB: ROLLBACK (đóng transaction đọc)
+    API --> UI: Trả về kết quả của đơn hiện có
+    UI --> Customer: Hiển thị đơn hiện có
+  else Khóa mới
+    alt Giá/tùy chọn không hợp lệ hoặc hết hàng
+      API -> DB: ROLLBACK
+      API --> UI: Từ chối; không lưu đơn/trừ kho một phần
+      UI --> Customer: Thông báo không thể đặt đơn
+    else Món hợp lệ và đủ tồn kho
+      API -> DB: Lưu đơn PENDING + dòng món;
+      API -> DB: trừ tồn kho trong cùng transaction
+      API -> DB: COMMIT
+      DB --> API: Mã đơn và tổng tiền
+      API --> UI: 201 Created; trạng thái PENDING
+      UI --> Customer: Hiển thị xác nhận và lựa chọn thanh toán
+    end
+  end
+end
+deactivate API
+
+== UC-05: Thanh toán đơn hàng mô phỏng ==
+Customer -> UI: Chọn Ví/Thẻ mô phỏng
+UI -> API: POST /orders/{id}/payments\nJWT + phương thức + Payment Idempotency-Key
+activate API
+API -> API: Xác thực JWT, chủ đơn và trạng thái
+API -> API: Chỉ nhận PENDING hoặc PAYMENT_FAILED
+API -> DB: Tra cứu Payment Idempotency-Key
+
+alt Cùng khóa, cùng nội dung đã xử lý
+  DB --> API: Trả về lần thanh toán/kết quả đã lưu
+  API --> UI: Trả lại cùng kết quả; không tính tiền lần nữa
+  UI --> Customer: Hiển thị kết quả đã có
+else Cùng khóa nhưng nội dung khác
+  DB --> API: Phát hiện xung đột khóa
+  API --> UI: 409 Conflict; từ chối yêu cầu
+  UI --> Customer: Thông báo yêu cầu thử lại không hợp lệ
+else Khóa mới
+  DB --> API: Chưa có lần thử với khóa này
+  API -> DB: Ghi nhận lần thử PROCESSING
+  API -> Payment: Xử lý thanh toán mô phỏng\n(order, số tiền, phương thức, idempotency key)
+  alt Thanh toán thành công
+    Payment --> API: Thành công + mã giao dịch
+    API -> DB: BEGIN; ghi giao dịch thành công,
+    API -> DB: chuyển đơn sang PAID
+    API -> DB: COMMIT
+    DB --> API: Xác nhận đã lưu
+    API --> UI: Kết quả PAID
+    UI -> UI: Cập nhật giỏ đúng một lần;
+    UI -> UI: giữ món thêm sau khi đặt đơn
+    UI --> Customer: Hiển thị thanh toán thành công
+  else Thanh toán thất bại xác định
+    Payment --> API: Thất bại
+    API -> DB: Lưu thất bại; chuyển đơn PAYMENT_FAILED;
+    API -> DB: giữ nguyên giỏ hàng
+    DB --> API: Xác nhận đã lưu
+    API --> UI: Báo thất bại; cho thử lại cùng đơn
+    UI --> Customer: Hiển thị lỗi và cho chọn lại phương thức
+    note over UI,API
+      Mỗi lần thử lại sau thất bại xác định dùng khóa mới.
+      Không tạo đơn mới hoặc trừ tồn kho lần nữa.
+    end note
+  else Timeout / chưa xác định kết quả
+    Payment -x API: Không nhận được kết quả chắc chắn
+    API -> Payment: Tra cứu giao dịch theo khóa hiện có
+    alt Tra cứu xác nhận thành công
+      Payment --> API: Giao dịch thành công
+      API -> DB: Ghi nhận PAID và kết quả giao dịch
+      DB --> API: Đã lưu; không xử lý trùng
+      API --> UI: Kết quả PAID
+      UI -> UI: Cập nhật giỏ đúng một lần
+      UI --> Customer: Hiển thị thanh toán thành công
+    else Tra cứu xác nhận thất bại
+      Payment --> API: Giao dịch thất bại
+      API -> DB: Lưu PAYMENT_FAILED; giữ giỏ hàng
+      DB --> API: Đã lưu
+      API --> UI: Báo thất bại; thử lại cùng đơn bằng khóa mới
+      UI --> Customer: Hiển thị lỗi thanh toán
+    else Vẫn chưa xác định
+      API -> DB: Giữ lần thử ở PROCESSING/chưa xác định
+      DB --> API: Đã lưu trạng thái chưa xác định
+      API --> UI: Báo kết quả chưa xác định;
+      API --> UI: chưa cho thanh toán lại hoặc hủy đơn
+      UI --> Customer: Hiển thị trạng thái chờ tra cứu
+    end
+  end
+end
+deactivate API
+
+note over Payment
+  Payment Service là mô phỏng trong MVP;
+  không thu tiền thật hoặc nhận dữ liệu thẻ thật.
+end note
+@enduml
