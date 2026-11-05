@@ -26,7 +26,7 @@ flowchart TB
 
     KH -->|"Xem menu, đặt đơn, thanh toán,<br/>theo dõi đơn (HTTPS)"| SYS
     NV -->|"Xem đơn, cập nhật trạng thái (HTTPS)"| SYS
-    GV -->|"Truy cập URL production,<br/>đọc repo và tài liệu"| SYS
+    GV -->|"Truy cập hệ thống nhóm cung cấp,<br/>đọc repo và tài liệu"| SYS
 ```
 
 Không có hệ thống bên ngoài nào xử lý tiền thật: Mock Payment nằm trong ranh giới BrewLite (theo `context-and-scope.md` mục 3.5 và `srs.md` mục 5).
@@ -39,7 +39,7 @@ flowchart LR
         BROWSER["COMP-BROWSER<br/>Trình duyệt / PWA"]
     end
 
-    subgraph PROD["Môi trường production"]
+    subgraph PROD["Môi trường Local Docker Compose"]
         WEB["COMP-WEB<br/>Next.js (mobile-first/PWA)<br/>cổng 3000"]
         API["COMP-API<br/>NestJS REST API<br/>cổng 3001<br/>(chứa module Mock Payment)"]
         DB[("COMP-DB<br/>PostgreSQL 16<br/>cổng 5432, volume bền vững")]
@@ -75,7 +75,7 @@ flowchart LR
 
 ## 4. Bảng thành phần (đầu vào cho Deployment Diagram)
 
-| Mã | Thành phần | Công nghệ | Thư mục mã nguồn | Chạy ở đâu (production) | Cổng / giao thức | Phụ thuộc | Yêu cầu liên quan |
+| Mã | Thành phần | Công nghệ | Thư mục mã nguồn | Chạy ở đâu | Cổng / giao thức | Phụ thuộc | Yêu cầu liên quan |
 |---|---|---|---|---|---|---|---|
 | COMP-BROWSER | Trình duyệt / PWA của người dùng | Chrome, Firefox, Service Worker (mở rộng) | — (do `apps/web` tạo ra) | Thiết bị người dùng | HTTPS 443 ra ngoài | COMP-WEB, COMP-API | NFR-05, NFR-10 |
 | COMP-WEB | Frontend | Next.js, React, TypeScript | `apps/web/` | Dịch vụ web/container Next.js (kèm CDN của nền tảng) | 3000 trong container; HTTPS 443 ngoài | COMP-API | FR-01…04, FR-11, FR-12, NFR-05 |
@@ -85,7 +85,7 @@ flowchart LR
 | COMP-REG | Container registry | GitHub Container Registry (GHCR), đề xuất | — | Dịch vụ ngoài | HTTPS 443 | — | NFR-09 |
 | COMP-CI | CI | GitHub Actions | `.github/workflows/ci.yml` | GitHub runner | HTTPS | — | NFR-07 |
 | COMP-CD | CD | GitHub Actions | `.github/workflows/cd.yml` | GitHub runner | HTTPS | COMP-REG, nền tảng triển khai | NFR-09 |
-| COMP-PLATFORM | Nền tảng triển khai | Chưa chốt (ADR-006) | `docs/deployment.md` | Dịch vụ ngoài | HTTPS | COMP-REG | NFR-02, NFR-04 |
+| COMP-PLATFORM | Nền tảng triển khai | **Local Docker Compose** (ADR-006) | `docker-compose.yml`, `docs/deployment.md` | Môi trường local (máy) của nhóm, chạy 3 container web, api, db | web 3000, api 3001 publish ra máy chủ; db 5432 **không publish** | COMP-REG | NFR-02, NFR-04, NFR-06 |
 | COMP-LOCAL | Môi trường local | Docker Compose | `docker-compose.yml` | Máy lập trình viên | web 3000, api 3001, db 5432 | — | NFR-06 |
 
 ## 5. C4 mức 3 – Component của COMP-API (kiến trúc phân lớp)
@@ -194,7 +194,7 @@ Biến môi trường dự kiến:
 
 ## 9. Bảo mật
 
-- HTTPS ở production (TLS do nền tảng/CDN kết thúc).
+- HTTPS: đề bài yêu cầu truy cập production qua HTTPS. Với Docker Compose, TLS cần reverse proxy hoặc tunnel đặt trước `web`/`api`; **chưa chọn**, xem ADR-006 và mục 13.
 - JWT ngắn hạn (tối đa 60 phút), mật khẩu băm bcrypt, `RolesGuard` cho CUSTOMER / STAFF / MANAGER.
 - `ValidationPipe` với whitelist, từ chối trường lạ (ví dụ `role` khi đăng ký).
 - `Throttler`: 5 lần đăng nhập sai / 60 giây / cặp email-IP → HTTP 429.
@@ -209,7 +209,7 @@ Biến môi trường dự kiến:
 | **Local** (COMP-LOCAL) | `docker-compose.yml`: web, api, db + volume | Phát triển, kiểm thử, người ngoài nhóm chạy theo README |
 | **CI** (COMP-CI) | GitHub Actions: install → lint → unit test → build; integration test có Postgres service container | Chặn merge khi lỗi (NFR-07) |
 | **Registry / CD** (COMP-REG, COMP-CD) | Build image, gắn tag commit SHA hoặc semver, push, deploy, migration, smoke test | Phát hành (NFR-09) |
-| **Production** (COMP-PLATFORM) | COMP-WEB, COMP-API, COMP-DB, secret, log, health check | URL công khai qua HTTPS |
+| **Vận hành cốt lõi** (COMP-PLATFORM = Local Docker Compose) | COMP-WEB, COMP-API, COMP-DB, file `.env`, log, health check | Phục vụ demo/nghiệm thu; truy cập công khai qua HTTPS cần bổ sung (mục 13) |
 
 ## 11. Lý do chọn kiến trúc, ưu điểm, hạn chế, trade-off
 
@@ -244,7 +244,7 @@ Các phương án đã cân nhắc và không chọn (vi dịch vụ, Next.js fu
 
 | # | Nội dung | Giá trị đang đề xuất | Người chốt |
 |---|---|---|---|
-| 1 | Nền tảng triển khai (ADR-006) | Chưa chốt: Render / Railway / Fly.io / VPS | Cả nhóm |
+| 1 | Nền tảng triển khai (ADR-006) | **Đã chốt: Local Docker Compose.** Còn mở: cách có HTTPS công khai (reverse proxy trên VPS hoặc tunnel) để đáp ứng URL production của đề bài | Cả nhóm |
 | 2 | ORM và công cụ migration (ADR-003) | TypeORM migrations | Backend |
 | 3 | Container registry (ADR-006) | GHCR | DevOps |
-| 4 | Frontend chạy dạng container Node hay dịch vụ web tĩnh/CDN của nền tảng | Container Node (SSR) | Frontend + DevOps |
+| 4 | Frontend chạy dạng nào | Container Node (SSR) trong Compose (đã khớp nền tảng) | Frontend + DevOps |
