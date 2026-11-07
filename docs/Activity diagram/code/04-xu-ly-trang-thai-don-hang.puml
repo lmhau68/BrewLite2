@@ -1,5 +1,5 @@
 @startuml
-title Activity Diagram - Vòng đời trạng thái đơn hàng 
+title Activity Diagram - Luồng xử lý trạng thái đơn hàng
 
 |Hệ thống (API NestJS)|
 start
