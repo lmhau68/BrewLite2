@@ -1,0 +1,80 @@
+@startuml
+title Activity Diagram - Đăng ký / Đăng nhập và quản lý phiên (JWT)
+
+|Khách hàng|
+start
+:Bấm nút "Tài khoản"\ntrên thanh điều hướng;
+|Auth UI (Next.js)|
+:Kiểm tra token trong localStorage\n(có tồn tại & còn hạn?);
+if (Token hợp lệ?) then (Có)
+  #LightGreen:Vào thẳng màn hình\n"Đăng nhập / Đăng ký";
+  #LightGreen:Dừng vòng lặp;
+else (Không)
+endif
+|Khách hàng|
+:Nhập email và mật khẩu;
+|Auth UI (Next.js)|
+:Kiểm tra định dạng\n(email hợp lệ, mật khẩu >= 6 ký tự,\nxác nhận mật khẩu khớp);
+if (Dữ liệu không hợp lệ?) then (Có)
+  #HotPink:Báo lỗi tại ô nhập;
+  #HotPink:Khách hàng;
+else (Hợp lệ)
+endif
+|Auth UI (Next.js)|
+if (Chọn "Đăng ký"?) then (Có)
+  :Gửi POST /auth/register\n(email, password);
+  |API (NestJS)|
+  :Tìm user theo email trong DB;
+  |PostgreSQL (Prisma)|
+  :SELECT User WHERE email = ?;
+  |API (NestJS)|
+  if (Email đã tồn tại?) then (Có)
+    #HotPink:Trả 400 "Email này đã được sử dụng!";
+    #HotPink:Auth UI (Next.js);
+  else (Không)
+    :Băm mật khẩu bằng bcrypt\n(saltRounds = 10);
+    :Tạo User (loyaltyPoints = 0);
+    |PostgreSQL (Prisma)|
+    :INSERT User;
+    |API (NestJS)|
+    :Trả "Đăng ký thành công"\n(không trả token);
+    |Auth UI (Next.js)|
+    :Tự động chuyển sang\nbước đăng nhập;
+    #HotPink:Khách hàng;
+  endif
+else (Không - Đăng nhập)
+  :Gửi POST /auth/login\n(email, password);
+  |API (NestJS)|
+  :Tìm user theo email;
+  |PostgreSQL (Prisma)|
+  :SELECT User WHERE email = ?;
+  |API (NestJS)|
+  if (Không tìm thấy user?) then (Có)
+    #HotPink:Trả 401 "Email hoặc mật khẩu không chính xác";
+    #HotPink:Auth UI (Next.js);
+  else (Không)
+    :bcrypt.compare(password,\npasswordHash);
+    if (Mật khẩu sai?) then (Có)
+      #HotPink:Trả 401 "Email hoặc mật khẩu không chính xác";
+      #HotPink:Auth UI (Next.js);
+    else (Không)
+      :Ký JWT\npayload { sub: userId, email };
+      :Trả accessToken;
+      |Auth UI (Next.js)|
+      :Lưu token vào localStorage\nvà phát sự kiện AUTH_EVENT;
+      #LightGreen:Đăng nhập thành công -\nnạp lại danh sách đơn của user;
+    endif
+  endif
+endif
+|Auth UI (Next.js)|
+:Gắn Authorization: Bearer <token>\ncho các request sau;
+|Menu / Orders (Next.js)|
+:Các request có token được\nxác thực bằng JwtStrategy;
+if (Server trả về 401?) then (Có)
+  #HotPink:Xoá token, quay về trạng thái\nchưa đăng nhập;
+else (Không)
+endif
+|Khách hàng|
+:Đặt hàng và xem lịch sử đơn\nthuộc tài khoản của mình;
+stop
+@enduml

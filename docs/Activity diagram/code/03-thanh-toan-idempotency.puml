@@ -1,0 +1,79 @@
+@startuml
+title Activity Diagram - Xử lý thanh toán và cơ chế Idempotency
+
+|Khách hàng|
+start
+:Bấm nút "Thanh toán <số tiền>";
+|Checkout (Next.js)|
+:Gửi POST /payments\nHeader: Idempotency-Key: ord<orderId>-<random>\nBody: orderId, amount, method, mockSuccess;
+|API (NestJS)|
+:ValidationPipe kiểm tra CreatePaymentDto\n(orderId số nguyên, amount >= 0.01,\nmethod thuộc {VI_DIEN_TU, THE_NGAN_HANG});
+if (Thiếu Idempotency-Key?) then (Có)
+  #HotPink:Trả 400 "Header Idempotency-Key là bắt buộc";
+  #HotPink:Checkout (Next.js);
+else (Không)
+endif
+|API (NestJS)|
+:Truy vấn Payment theo idempotencyKey;
+|PostgreSQL (Prisma)|
+:SELECT Payment WHERE idempotencyKey = ?\n(kèm quan hệ Order);
+|API (NestJS)|
+if (Giao dịch đã tồn tại?) then (Có)
+  if (Payload khác với giao dịch cũ?) then (Khác)
+    #HotPink:Trả 409 "Idempotency-Key đã được dùng\ncho yêu cầu thanh toán khác";
+    #HotPink:Checkout (Next.js);
+  else (Trùng)
+    #LightGreen:Trả lại kết quả cũ\n(success theo status lưu trữ,\nisIdempotent = true,\nkhông tạo giao dịch mới);
+    #LightGreen:Checkout (Next.js);
+  endif
+else (Không)
+endif
+|API (NestJS)|
+:Mở transaction Serializable\nvà tạo Payment status = PROCESSING;
+|API (NestJS)|
+:Đọc Order theo id;
+if (Không tìm thấy đơn?) then (Có)
+  #HotPink:Trả 404 Not Found;
+  #HotPink:Checkout (Next.js);
+else (Không)
+endif
+|API (NestJS)|
+if (Trạng thái đơn không phải\nPENDING / PAYMENT_FAILED?) then (Có)
+  #HotPink:Trả 400 "Không thể thanh toán cho đơn\nđang ở trạng thái ..." ;
+  #HotPink:Checkout (Next.js);
+else (Không)
+endif
+|API (NestJS)|
+:So sánh amount với order.total\n(lệch > 0.01 là không khớp);
+if (Số tiền không khớp?) then (Có)
+  #HotPink:Trả 400 "Số tiền thanh toán không khớp";
+  #HotPink:Checkout (Next.js);
+else (Không)
+endif
+|Cổng thanh toán giả lập|
+:Quyết định kết quả giao dịch\n(mockSuccess);
+if (mockSuccess = false?) then (Thất bại)
+  #HotPink:Cập nhật Payment -> FAILED\n(failureReason: "Mock payment declined");\nCập nhật Order -> PAYMENT_FAILED\n(kiểm tra optimistic lock: status + version);
+  |API (NestJS)|
+  :Trả success = false,\norderStatus = PAYMENT_FAILED,\nloyaltyPointsAwarded = 0;
+else (Thành công)
+  #LightGreen:Cập nhật Order -> PAID\n(kiểm tra optimistic lock: status + version)\nghi loyaltyPointsAwarded;
+  |API (NestJS)|
+  if (Đơn có userId và điểm > 0?) then (Có)
+    #LightGreen:Tạo LoyaltyTransaction\nvà cộng loyaltyPoints cho User;
+  else (Không)
+    :Khách vãng lai -\nghi điểm nhận được nhưng\nkhông cộng vào tài khoản;
+  endif
+  :Cập nhật Payment -> SUCCEEDED;
+  :Trả success = true,\norderStatus = PAID,\nloyaltyPointsAwarded = điểm;
+endif
+|Checkout (Next.js)|
+if (success = true?) then (Có)
+  #LightGreen:Xoá giỏ hàng\nXoá dữ liệu localStorage của khách vãng lai\n(clearGuestData) để bảo vệ riêng tư;\nHiển thị "Đặt đơn xong" + số điểm tích lũy;
+else (Không)
+  #HotPink:Cập nhật badge trạng thái đơn\nHiển thị lỗi cho khách\n(cho phép thử lại với khoá idempotency mới);
+endif
+|Khách hàng|
+:Tiếp tục theo dõi đơn hàng;
+stop
+@enduml
