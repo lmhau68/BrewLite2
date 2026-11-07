@@ -134,14 +134,14 @@ PaymentStatus ..> Payment : sử dụng
 UserRole ..> User : sử dụng
 
 ' Quan hệ giữa các Class
-User "1" -- "0..*" Order : places >
-User "1" -- "0..*" LoyaltyTransaction : has >
-Order "1" -- "1..*" OrderItem : contains >
-Order "0..*" -- "0..1" Promotion : applies >
-Order "0..*" -- "0..1" Payment : paid by >
-Order "1" -- "0..1" LoyaltyTransaction : generates >
-Product "1" -- "0..*" ProductSize : has sizes >
-Product "1" -- "0..*" Topping : supports options >
-Product "1" -- "0..*" OrderItem : referenced in >
+User "1" -- "0..*" Order : đặt >
+User "1" -- "0..*" LoyaltyTransaction : có >
+Order "1" -- "1..*" OrderItem : chứa >
+Order "0..*" -- "0..1" Promotion : áp dụng >
+Order "0..*" -- "0..1" Payment : thanh toán bởi >
+Order "1" -- "0..1" LoyaltyTransaction : sinh ra >
+Product "1" -- "0..*" ProductSize : có kích thước >
+Product "1" -- "0..*" Topping : hỗ trợ tùy chọn >
+Product "1" -- "0..*" OrderItem : được tham chiếu trong >
 
 @enduml
