@@ -3,10 +3,9 @@
 Ứng dụng đặt đồ uống cho cửa hàng BrewLite. Luồng nghiệp vụ:
 **Xem menu → Chọn tùy chọn → Giỏ hàng → Đặt đơn → Thanh toán → Theo dõi đơn**.
 
-> **Trạng thái hiện tại — Sprint 1 (Task 4.3).** Đã có luồng xem menu: API
-> `GET /products`, `GET /products/:id`, màn hình menu mobile-first, dữ liệu mẫu
-> và unit test backend. Giỏ hàng, đặt đơn, thanh toán và quản lý trạng thái đơn
-> thuộc Sprint 2 (Task 5.1).
+> **Trạng thái hiện tại — Sprint 2 (Task 5.1).** Ứng dụng có luồng từ xem menu,
+> chọn size/topping, giỏ hàng, đăng nhập, đặt đơn đến thanh toán mô phỏng và
+> theo dõi/cập nhật trạng thái đơn.
 
 ## Công nghệ
 
@@ -37,7 +36,16 @@ Sau đó truy cập:
 | API | http://localhost:3001 |
 | Health check | http://localhost:3001/health |
 
-Migration và seed được chạy tự động khi container `api` khởi động.
+Trước khi khởi động, thay `JWT_SECRET` trong `.env` bằng một chuỗi ngẫu nhiên
+riêng tư dài tối thiểu 32 ký tự. `MOCK_PAYMENT_OUTCOME` nhận `SUCCESS`,
+`FAILED` hoặc `TIMEOUT` để thử các kết quả thanh toán giả lập. Thanh toán ngân
+hàng/QR chỉ phục vụ demo; không kết nối ngân hàng và không xử lý tiền thật.
+
+Migration và seed được chạy tự động trước khi container `api` khởi động.
+Để dùng màn hình nhân viên trong demo, điền `SEED_STAFF_EMAIL` và
+`SEED_STAFF_PASSWORD` trong `.env` trước lần chạy đầu. Seed tạo tài khoản
+`STAFF` mà không dùng mật khẩu mặc định; đặt các biến này trước khi áp dụng
+migration/seed trên môi trường mới.
 Kiểm tra dữ liệu mẫu:
 
 ```bash
@@ -60,7 +68,8 @@ Cần Node.js 20+ và PostgreSQL 16 đang chạy.
 # 1. Backend
 cd apps/api
 npm install
-cp ../../.env.example .env          # sửa POSTGRES_* nếu DB không ở mặc định
+cp ../../.env.example .env          # DATABASE_URL phải trỏ tới localhost nếu chạy ngoài Compose
+# đặt JWT_SECRET riêng tư; tùy chọn đặt SEED_STAFF_EMAIL/SEED_STAFF_PASSWORD
 npm run migration:run               # tạo schema
 npm run seed                        # nạp dữ liệu mẫu (idempotent)
 npm run start:dev                   # http://localhost:3001
@@ -100,6 +109,13 @@ Chạy từ thư mục `apps/web`:
 | GET | `/products` | Danh sách món. Query `category` lọc theo danh mục, `includeUnavailable=true` gồm món hết hàng. |
 | GET | `/products/:id` | Chi tiết món kèm size và topping hỗ trợ. |
 | GET | `/health` | Health check API + DB (200 sẵn sàng, 503 khi mất DB). |
+| POST | `/auth/register`, `/auth/login` | Đăng ký khách hàng và đăng nhập, trả JWT. |
+| GET | `/auth/me` | Tài khoản hiện tại (JWT). |
+| POST / GET | `/orders` | Tạo đơn idempotent và liệt kê đơn của tài khoản (JWT). |
+| GET | `/orders/:orderId` | Chi tiết đơn thuộc tài khoản (JWT). |
+| POST / GET | `/payments` | Thanh toán mô phỏng / tra cứu giao dịch (JWT). |
+| GET | `/staff/orders` | Danh sách đơn cho nhân viên/quản lý (JWT, phân quyền). |
+| PATCH | `/staff/orders/:orderId/status` | Cập nhật trạng thái đơn hợp lệ (JWT, phân quyền). |
 
 Giá trả về là **số nguyên VND** theo BR-01.
 
@@ -109,6 +125,11 @@ Giá trả về là **số nguyên VND** theo BR-01.
 |---|---|
 | `/` | Menu: danh sách món, lọc theo danh mục, ảnh minh hoạ từng món. |
 | `/products/:id` | Chi tiết món: ảnh, mô tả, giá, **kích thước (S/M/L kèm phụ thu)** và **topping hỗ trợ** (FR-02). |
+| `/cart` | Sửa giỏ hàng và tạo đơn. |
+| `/login`, `/register` | Đăng nhập và đăng ký khách hàng. |
+| `/checkout/payment/:orderId` | Thanh toán mô phỏng bằng QR ví hoặc ngân hàng/thẻ giả lập. |
+| `/orders`, `/orders/:orderId` | Lịch sử, chi tiết và trạng thái đơn của khách. |
+| `/staff/orders` | Nhân viên/quản lý xem đơn và cập nhật trạng thái. |
 
 Ảnh món nằm ở `apps/web/public/images/menu/` và được ánh xạ qua trường
 `imageUrl` của sản phẩm trong database.
@@ -122,7 +143,7 @@ brewlite/
 │   │   ├── src/
 │   │   │   ├── config/         # Cấu hình kết nối DB
 │   │   │   ├── database/       # Entity, migration, seed
-│   │   │   └── modules/        # products, health
+│   │   │   └── modules/        # products, health, auth, orders, payments
 │   │   └── Dockerfile
 │   └── web/                    # Next.js
 │       ├── app/                # App Router (menu + /products/[id])

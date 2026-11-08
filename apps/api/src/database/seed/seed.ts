@@ -1,11 +1,13 @@
+import bcrypt from 'bcryptjs';
 import { DataSource, EntityManager } from 'typeorm';
+import { User, UserRole } from '../entities/user.entity.js';
 import { Product } from '../entities/product.entity.js';
 import { ProductSize } from '../entities/product-size.entity.js';
 import { Topping } from '../entities/topping.entity.js';
 import { SEED_PRODUCTS, SEED_TOPPINGS } from './data.js';
 
 /**
- * Nạp dữ liệu mẫu cho menu.
+ * Nạp dữ liệu menu và tài khoản nhân viên demo nếu được cấu hình.
  *
  * Idempotent: dùng `upsert` theo khoá tự nhiên `slug`, nên chạy lại nhiều lần
  * không nhân đôi dữ liệu (NFR-06). Chạy trong một transaction để không để lại
@@ -21,7 +23,49 @@ export async function seedDatabase(dataSource: DataSource): Promise<void> {
       await replaceSizes(manager, productId, seedProduct.sizes);
       await replaceToppingLinks(manager, productId, seedProduct.toppingSlugs, toppings);
     }
+
+    await seedStaffAccount(manager);
   });
+}
+
+async function seedStaffAccount(manager: EntityManager): Promise<void> {
+  const configuredEmail = process.env['SEED_STAFF_EMAIL'];
+  const password = process.env['SEED_STAFF_PASSWORD'];
+  if (!configuredEmail && !password) return;
+  if (!configuredEmail || !password) {
+    throw new Error('SEED_STAFF_EMAIL và SEED_STAFF_PASSWORD phải được cấu hình cùng nhau');
+  }
+
+  const email = configuredEmail.trim().normalize('NFC').toLowerCase();
+  const fullName = process.env['SEED_STAFF_NAME']?.trim() || 'BrewLite Staff';
+  if (
+    email.length > 320 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+    password.length < 8 ||
+    Buffer.byteLength(password, 'utf8') > 72 ||
+    fullName.length < 2 ||
+    fullName.length > 120
+  ) {
+    throw new Error('Thông tin tài khoản nhân viên seed không hợp lệ');
+  }
+
+  const users = manager.getRepository(User);
+  const existing = await users.findOne({ where: { email } });
+  if (existing) {
+    if (existing.role === UserRole.CUSTOMER) {
+      throw new Error('Email seed nhân viên đã thuộc về tài khoản khách hàng');
+    }
+    return;
+  }
+
+  await users.save(
+    users.create({
+      email,
+      fullName,
+      passwordHash: await bcrypt.hash(password, 12),
+      role: UserRole.STAFF,
+    }),
+  );
 }
 
 async function upsertToppings(
