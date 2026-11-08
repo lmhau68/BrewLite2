@@ -103,6 +103,16 @@ Chạy từ thư mục `apps/web`:
 
 Giá trả về là **số nguyên VND** theo BR-01.
 
+### Giao diện
+
+| Route | Mô tả |
+|---|---|
+| `/` | Menu: danh sách món, lọc theo danh mục, ảnh minh hoạ từng món. |
+| `/products/:id` | Chi tiết món: ảnh, mô tả, giá, **kích thước (S/M/L kèm phụ thu)** và **topping hỗ trợ** (FR-02). |
+
+Ảnh món nằm ở `apps/web/public/images/menu/` và được ánh xạ qua trường
+`imageUrl` của sản phẩm trong database.
+
 ## Cấu trúc thư mục
 
 ```
@@ -115,8 +125,9 @@ brewlite/
 │   │   │   └── modules/        # products, health
 │   │   └── Dockerfile
 │   └── web/                    # Next.js
-│       ├── app/                # App Router
+│       ├── app/                # App Router (menu + /products/[id])
 │       ├── components/         # Component giao diện menu
+│       ├── public/images/menu/ # Ảnh từng món
 │       ├── lib/                # API client, kiểu dữ liệu
 │       └── Dockerfile
 ├── docs/                       # Yêu cầu, sơ đồ, kiến trúc
