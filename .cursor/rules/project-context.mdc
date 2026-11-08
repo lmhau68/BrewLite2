@@ -1,0 +1,14 @@
+---
+alwaysApply: true
+
+Đọc AGENTS.md và project-context.mdc.
+
+Kiểm tra toàn bộ dự án để xác nhận:
+1. Database đang sử dụng là PostgreSQL.
+2. ORM được cấu hình tương thích PostgreSQL.
+3. Không còn cấu hình MySQL.
+4. Các biến môi trường Database được cấu hình thống nhất.
+
+Chỉ kiểm tra và báo cáo những điểm chưa phù hợp.
+Không tự ý chỉnh sửa code.
+---

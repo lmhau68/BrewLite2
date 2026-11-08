@@ -1,0 +1,115 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: brewlite-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-brewlite}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-brewlite}
+      POSTGRES_DB: ${POSTGRES_DB:-brewlite}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-brewlite} -d ${POSTGRES_DB:-brewlite}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # Cổng 5432 không publish ra host: DB chỉ truy cập được trong mạng nội bộ
+    # Docker (NFR-04). Dùng file override riêng nếu cần truy cập từ máy.
+    networks:
+      - brewlite-net
+
+  # Chạy migration và nạp dữ liệu mẫu một lần, trước khi API nhận request.
+  # Tách khỏi `api` để seed chạy đúng một lần, không chạy lại mỗi lần restart.
+  migrate:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: brewlite-migrate
+    command: ['node', 'dist/database/seed/run-seed.js']
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-brewlite}:${POSTGRES_PASSWORD:-brewlite}@db:5432/${POSTGRES_DB:-brewlite}
+      DB_LOGGING: ${DB_LOGGING:-false}
+    restart: 'no'
+    networks:
+      - brewlite-net
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: brewlite-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgres://${POSTGRES_USER:-brewlite}:${POSTGRES_PASSWORD:-brewlite}@db:5432/${POSTGRES_DB:-brewlite}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      # Migration đã chạy ở service `migrate`, không chạy lại khi khởi động API.
+      DB_MIGRATIONS_RUN: 'false'
+      DB_LOGGING: ${DB_LOGGING:-false}
+    ports:
+      - '3001:3001'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - brewlite-net
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+    container_name: brewlite-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - '3000:3000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - brewlite-net
+
+volumes:
+  pgdata:
+
+networks:
+  brewlite-net:
+    name: brewlite-net
+    driver: bridge
