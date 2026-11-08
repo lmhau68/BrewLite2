@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" role="img" aria-label="Trà Vải">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#EEF3DC"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+    <linearGradient id="drink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#A8C25A"/>
+      <stop offset="100%" stop-color="#5E7A22"/>
+    </linearGradient>
+  </defs>
+  <rect width="360" height="360" fill="url(#bg)"/>
+  <circle cx="180" cy="196" r="118" fill="#ffffff" opacity="0.45"/>
+
+  <path d="M114 162h132l-12 158a22 22 0 0 1-22 19h-64a22 22 0 0 1-22-19Z" fill="#ffffff" opacity="0.5"/>
+  <path d="M128 206h104l-9 112a14 14 0 0 1-14 13h-58a14 14 0 0 1-14-13Z" fill="#A8C25A"/>
+  <rect x="140" y="214" width="34" height="32" rx="6" fill="#ffffff" opacity="0.42"/>
+  <rect x="180" y="232" width="32" height="30" rx="6" fill="#ffffff" opacity="0.34"/>
+  <rect x="152" y="252" width="36" height="34" rx="7" fill="#ffffff" opacity="0.38"/>
+  <path d="M246 184c20 6 30 26 26 48" fill="none" stroke="#5E7A22" stroke-width="9" stroke-linecap="round" opacity="0.7"/>
+
+  <rect x="104" y="146" width="152" height="18" rx="9" fill="#5E7A22" opacity="0.85"/>
+</svg>

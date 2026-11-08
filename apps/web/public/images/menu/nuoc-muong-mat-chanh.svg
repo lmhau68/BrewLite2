@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" role="img" aria-label="Nước Mứng Mật Chanh">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FAF0D4"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+    <linearGradient id="drink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#D9B84A"/>
+      <stop offset="100%" stop-color="#8A6A12"/>
+    </linearGradient>
+  </defs>
+  <rect width="360" height="360" fill="url(#bg)"/>
+  <circle cx="180" cy="196" r="118" fill="#ffffff" opacity="0.45"/>
+
+  <path d="M116 166h128l-11 152a22 22 0 0 1-22 20h-62a22 22 0 0 1-22-20Z" fill="#ffffff" opacity="0.72"/>
+  <path d="M130 208h100l-8 110a14 14 0 0 1-14 12h-56a14 14 0 0 1-14-12Z" fill="#D9B84A"/>
+  <path d="M244 186c20 6 30 24 26 46" fill="none" stroke="#8A6A12" stroke-width="9" stroke-linecap="round" opacity="0.75"/>
+  <path d="M168 150c-16-18 12-28 0-52" fill="none" stroke="#8A6A12" stroke-width="7" stroke-linecap="round" opacity="0.5"/>
+  <path d="M202 142c-14-16 10-24 0-44" fill="none" stroke="#8A6A12" stroke-width="6" stroke-linecap="round" opacity="0.4"/>
+
+  <rect x="104" y="146" width="152" height="18" rx="9" fill="#8A6A12" opacity="0.85"/>
+</svg>

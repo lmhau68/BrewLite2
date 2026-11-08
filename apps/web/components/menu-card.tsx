@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { formatPrice } from '@/lib/format';
 import type { Product } from '@/lib/types';
 
@@ -14,30 +15,36 @@ interface MenuCardProps {
 export function MenuCard({ product }: MenuCardProps) {
   return (
     <li className="card">
-      <div className="card__media" aria-hidden="true">
-        {product.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={product.imageUrl} alt="" loading="lazy" />
-        ) : (
-          '☕'
-        )}
-      </div>
-
-      <div className="card__body">
-        <h2 className="card__name">{product.name}</h2>
-
-        {product.description ? (
-          <p className="card__description">{product.description}</p>
-        ) : null}
-
-        <div className="card__footer">
-          <span className="card__price">{formatPrice(product.basePrice)}</span>
-
-          {product.isAvailable ? null : (
-            <span className="card__tag">Hết hàng</span>
+      <Link
+        href={`/products/${product.id}`}
+        className="card__link"
+        aria-label={`Xem chi tiết ${product.name}`}
+      >
+        <div className="card__media" aria-hidden="true">
+          {product.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={product.imageUrl} alt="" loading="lazy" />
+          ) : (
+            '☕'
           )}
         </div>
-      </div>
+
+        <div className="card__body">
+          <h2 className="card__name">{product.name}</h2>
+
+          {product.description ? (
+            <p className="card__description">{product.description}</p>
+          ) : null}
+
+          <div className="card__footer">
+            <span className="card__price">{formatPrice(product.basePrice)}</span>
+
+            {product.isAvailable ? null : (
+              <span className="card__tag">Hết hàng</span>
+            )}
+          </div>
+        </div>
+      </Link>
     </li>
   );
 }

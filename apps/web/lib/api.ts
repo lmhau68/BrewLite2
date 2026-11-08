@@ -1,4 +1,4 @@
-import type { Product } from './types';
+import type { Product, ProductDetail } from './types';
 
 /**
  * URL của COMP-API.
@@ -98,4 +98,14 @@ export function fetchProducts(
   const search = params.toString();
 
   return request<Product[]>(`/products${search ? `?${search}` : ''}`, signal);
+}
+
+/**
+ * Lấy chi tiết một món kèm size và topping hỗ trợ (FR-02).
+ */
+export function fetchProductDetail(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ProductDetail> {
+  return request<ProductDetail>(`/products/${id}`, signal);
 }
