@@ -7,7 +7,7 @@ interface ProductPageProps {
 }
 
 /**
- * Trang chi tiết món (FR-02): hiển thị size và topping hỗ trợ.
+ * Trang chi tiết món (FR-02, FR-03): chọn size/topping và thêm vào giỏ.
  *
  * `params` được đọc bên trong `<Suspense>` để Next.js có thể prerender
  * shell của route (Cache Components), còn phần dữ liệu chi tiết tải ở client.

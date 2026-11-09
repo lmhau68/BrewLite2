@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProductDetail } from '@/components/product-detail';
 import { ApiError, fetchProductDetail } from '@/lib/api';
@@ -9,6 +10,11 @@ vi.mock('@/lib/api', async (importOriginal) => {
 
   return { ...actual, fetchProductDetail: vi.fn() };
 });
+
+const { mockAddItem } = vi.hoisted(() => ({ mockAddItem: vi.fn() }));
+vi.mock('@/lib/cart', () => ({
+  useCart: () => ({ addItem: mockAddItem }),
+}));
 
 const mockedFetchProductDetail = vi.mocked(fetchProductDetail);
 
@@ -38,6 +44,7 @@ const buildDetail = (
 describe('ProductDetail', () => {
   beforeEach(() => {
     mockedFetchProductDetail.mockReset();
+    mockAddItem.mockReset();
   });
 
   it('hiển thị trạng thái đang tải khi chờ chi tiết món', () => {
@@ -57,7 +64,9 @@ describe('ProductDetail', () => {
       await screen.findByRole('heading', { name: 'Bạc Xỉu Đá' }),
     ).toBeInTheDocument();
     expect(screen.getByText('Cà phê đen đá pha sẵn')).toBeInTheDocument();
-    expect(screen.getByText(/25\.000/)).toBeInTheDocument();
+    expect(document.querySelector('.detail__price')).toHaveTextContent(
+      '25.000',
+    );
     expect(
       screen.getByRole('img', { name: 'Bạc Xỉu Đá' }),
     ).toHaveAttribute('src', '/images/menu/bac-xiu-da.svg');
@@ -144,5 +153,31 @@ describe('ProductDetail', () => {
     expect(
       screen.getByText('Món này không có tùy chọn topping.'),
     ).toBeInTheDocument();
+  });
+
+  it('tính giá theo lựa chọn và thêm cấu hình vào giỏ', async () => {
+    const user = userEvent.setup();
+    mockedFetchProductDetail.mockResolvedValue(buildDetail());
+
+    render(<ProductDetail productId="product-1" />);
+
+    await screen.findByRole('heading', { name: 'Bạc Xỉu Đá' });
+    await user.click(screen.getByRole('radio', { name: 'Size M' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Kem cheese' }));
+    await user.clear(screen.getByLabelText('Số lượng'));
+    await user.type(screen.getByLabelText('Số lượng'), '2');
+    expect(screen.getByText('Đơn giá:')).toHaveTextContent('37.000');
+    await user.click(screen.getByRole('button', { name: 'Thêm vào giỏ hàng' }));
+
+    expect(mockAddItem).toHaveBeenCalledWith({
+      productId: 'product-1',
+      productName: 'Bạc Xỉu Đá',
+      sizeId: 'size-2',
+      sizeName: 'M',
+      toppings: [{ id: 'top-2', name: 'Kem cheese', price: 7000 }],
+      quantity: 2,
+      unitPrice: 37000,
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('đã được thêm vào giỏ hàng');
   });
 });

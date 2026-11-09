@@ -5,6 +5,9 @@ import { buildConnectionOptions } from './config/database.config.js';
 import { entities } from './database/entities/index.js';
 import { migrations } from './database/migrations/index.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { AuthModule } from './modules/auth/auth.module.js';
+import { OrdersModule } from './modules/orders/orders.module.js';
+import { PaymentsModule } from './modules/payments/payments.module.js';
 import { ProductsModule } from './modules/products/products.module.js';
 
 @Module({
@@ -30,6 +33,9 @@ import { ProductsModule } from './modules/products/products.module.js';
     }),
     ProductsModule,
     HealthModule,
+    AuthModule,
+    OrdersModule,
+    PaymentsModule,
   ],
 })
 export class AppModule {}

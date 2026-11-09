@@ -1,4 +1,13 @@
-import type { Product, ProductDetail } from './types';
+import { getAccessToken } from './auth';
+import type {
+  AuthSession,
+  Order,
+  OrderStatus,
+  PaymentSummary,
+  Product,
+  ProductDetail,
+  PublicUser,
+} from './types';
 
 /**
  * URL của COMP-API.
@@ -7,7 +16,24 @@ import type { Product, ProductDetail } from './types';
  * build lại image. Mặc định trỏ về API chạy cùng Docker Compose.
  */
 export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+function getApiUrl() {
+  if (typeof window === 'undefined') return API_URL;
+
+  const configuredUrl = new URL(API_URL);
+  const apiUsesLoopback = ['localhost', '127.0.0.1'].includes(
+    configuredUrl.hostname,
+  );
+  const pageUsesLoopback = ['localhost', '127.0.0.1'].includes(
+    window.location.hostname,
+  );
+  if (apiUsesLoopback && !pageUsesLoopback) {
+    configuredUrl.hostname = window.location.hostname;
+    return configuredUrl.origin;
+  }
+  return API_URL;
+}
 
 /**
  * Lỗi API đã được chuẩn hoá, mang theo mã HTTP để giao diện hiển thị
@@ -23,13 +49,40 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
+interface RequestOptions {
+  signal?: AbortSignal;
+  method?: 'GET' | 'POST' | 'PATCH';
+  body?: unknown;
+  authenticated?: boolean;
+  idempotencyKey?: string;
+}
+
+async function request<T>(
+  path: string,
+  options: RequestOptions = {},
+): Promise<T> {
+  const headers = new Headers({ Accept: 'application/json' });
+  if (options.body !== undefined) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (options.idempotencyKey) {
+    headers.set('Idempotency-Key', options.idempotencyKey);
+  }
+  if (options.authenticated) {
+    const token = getAccessToken();
+    if (!token) throw new ApiError('Vui lòng đăng nhập để tiếp tục.', 401);
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
   let response: Response;
 
   try {
-    response = await fetch(`${API_URL}${path}`, {
-      signal,
-      headers: { Accept: 'application/json' },
+    response = await fetch(`${getApiUrl()}${path}`, {
+      method: options.method ?? 'GET',
+      signal: options.signal,
+      headers,
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
       cache: 'no-store',
     });
   } catch (error) {
@@ -97,7 +150,9 @@ export function fetchProducts(
 
   const search = params.toString();
 
-  return request<Product[]>(`/products${search ? `?${search}` : ''}`, signal);
+  return request<Product[]>(`/products${search ? `?${search}` : ''}`, {
+    signal,
+  });
 }
 
 /**
@@ -107,5 +162,120 @@ export function fetchProductDetail(
   id: string,
   signal?: AbortSignal,
 ): Promise<ProductDetail> {
-  return request<ProductDetail>(`/products/${id}`, signal);
+  return request<ProductDetail>(`/products/${encodeURIComponent(id)}`, {
+    signal,
+  });
+}
+
+export function registerAccount(input: {
+  fullName: string;
+  email: string;
+  password: string;
+}): Promise<AuthSession> {
+  return request<AuthSession>('/auth/register', {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export function loginAccount(input: {
+  email: string;
+  password: string;
+}): Promise<AuthSession> {
+  return request<AuthSession>('/auth/login', { method: 'POST', body: input });
+}
+
+export function fetchCurrentUser(): Promise<PublicUser> {
+  return request<PublicUser>('/auth/me', { authenticated: true });
+}
+
+export function createOrder(
+  items: Array<{
+    productId: string;
+    sizeId?: string;
+    toppingIds: string[];
+    quantity: number;
+  }>,
+  idempotencyKey: string,
+): Promise<Order> {
+  return request<Order>('/orders', {
+    method: 'POST',
+    authenticated: true,
+    idempotencyKey,
+    body: { items },
+  });
+}
+
+export function fetchOrders(): Promise<Order[]> {
+  return request<Order[]>('/orders', { authenticated: true });
+}
+
+export function fetchOrder(orderId: string): Promise<Order> {
+  return request<Order>(`/orders/${encodeURIComponent(orderId)}`, {
+    authenticated: true,
+  });
+}
+
+export function fetchStaffOrders(): Promise<Order[]> {
+  return request<Order[]>('/staff/orders', { authenticated: true });
+}
+
+export function updateStaffOrder(
+  orderId: string,
+  status: OrderStatus,
+): Promise<Order> {
+  return request<Order>(
+    `/staff/orders/${encodeURIComponent(orderId)}/status`,
+    { method: 'PATCH', authenticated: true, body: { status } },
+  );
+}
+
+export function submitPayment(
+  input: {
+    orderId: string;
+    method: 'WALLET' | 'CARD';
+    bankCode?: string;
+    accountNumber?: string;
+  },
+  idempotencyKey: string,
+): Promise<PaymentSummary> {
+  return request<PaymentSummary>('/payments', {
+    method: 'POST',
+    authenticated: true,
+    idempotencyKey,
+    body: input,
+  });
+}
+
+export function fetchPayment(paymentId: string): Promise<PaymentSummary> {
+  return request<PaymentSummary>(
+    `/payments/${encodeURIComponent(paymentId)}`,
+    { authenticated: true },
+  );
+}
+
+export function simulateQrPayment(
+  paymentId: string,
+  scanToken: string,
+): Promise<PaymentSummary> {
+  return request<PaymentSummary>(
+    `/payments/${encodeURIComponent(paymentId)}/mock-scan`,
+    { method: 'POST', body: { scanToken } },
+  );
+}
+
+export function cancelQrPayment(paymentId: string): Promise<PaymentSummary> {
+  return request<PaymentSummary>(
+    `/payments/${encodeURIComponent(paymentId)}/mock-cancel`,
+    { method: 'POST', authenticated: true },
+  );
+}
+
+export function simulateCardPaymentResult(
+  paymentId: string,
+): Promise<PaymentSummary> {
+  return request<PaymentSummary>(
+    `/payments/${encodeURIComponent(paymentId)}/mock-result`,
+    { method: 'POST', authenticated: true },
+  );
 }

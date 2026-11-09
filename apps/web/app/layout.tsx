@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import { SiteNav } from '@/components/site-nav';
+import { CartProvider } from '@/lib/cart';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -17,7 +19,12 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="vi">
-      <body>{children}</body>
+      <body>
+        <CartProvider>
+          <SiteNav />
+          {children}
+        </CartProvider>
+      </body>
     </html>
   );
 }

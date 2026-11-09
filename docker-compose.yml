@@ -35,6 +35,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-brewlite}:${POSTGRES_PASSWORD:-brewlite}@db:5432/${POSTGRES_DB:-brewlite}
       DB_LOGGING: ${DB_LOGGING:-false}
+      SEED_STAFF_EMAIL: ${SEED_STAFF_EMAIL:-}
+      SEED_STAFF_PASSWORD: ${SEED_STAFF_PASSWORD:-}
+      SEED_STAFF_NAME: ${SEED_STAFF_NAME:-BrewLite Staff}
     restart: 'no'
     networks:
       - brewlite-net
@@ -55,9 +58,12 @@ services:
       PORT: 3001
       DATABASE_URL: postgres://${POSTGRES_USER:-brewlite}:${POSTGRES_PASSWORD:-brewlite}@db:5432/${POSTGRES_DB:-brewlite}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      MOCK_PAYMENT_OUTCOME: ${MOCK_PAYMENT_OUTCOME:-SUCCESS}
       # Migration đã chạy ở service `migrate`, không chạy lại khi khởi động API.
       DB_MIGRATIONS_RUN: 'false'
       DB_LOGGING: ${DB_LOGGING:-false}
+      LAN_HOST: ${LAN_HOST:-192.168.1.12}
     ports:
       - '3001:3001'
     healthcheck:
@@ -81,6 +87,7 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+        NEXT_PUBLIC_LAN_HOST: ${NEXT_PUBLIC_LAN_HOST:-192.168.1.12}
     container_name: brewlite-web
     restart: unless-stopped
     depends_on:
