@@ -30,8 +30,21 @@ describe('OrdersService', () => {
     create: ReturnType<typeof vi.fn>;
     save: ReturnType<typeof vi.fn>;
   };
+  let productQuery: {
+    setLock: ReturnType<typeof vi.fn>;
+    where: ReturnType<typeof vi.fn>;
+    getOne: ReturnType<typeof vi.fn>;
+  };
+  let toppingQuery: {
+    setLock: ReturnType<typeof vi.fn>;
+    where: ReturnType<typeof vi.fn>;
+    getOne: ReturnType<typeof vi.fn>;
+  };
+  let savedOrder: Order | null;
+  let transaction: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    savedOrder = null;
     product = Object.assign(new Product(), {
       id: PRODUCT_ID,
       name: 'Bạc Xỉu',
@@ -48,26 +61,29 @@ describe('OrdersService', () => {
       stockQuantity: 5,
     });
 
-    const productQuery = {
+    productQuery = {
       setLock: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
       getOne: vi.fn().mockResolvedValue(product),
     };
-    const toppingQuery = {
+    toppingQuery = {
       setLock: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
       getOne: vi.fn().mockResolvedValue(topping),
     };
 
     orderRepository = {
-      findOne: vi.fn().mockResolvedValue(null),
+      findOne: vi.fn(async () => savedOrder),
       create: vi.fn((input: Partial<Order>) =>
         Object.assign(new Order(), input, {
           id: '00000000-0000-4000-8000-000000000006',
           createdAt: new Date('2026-01-01T00:00:00.000Z'),
         }),
       ),
-      save: vi.fn(async (entity: Order) => entity),
+      save: vi.fn(async (entity: Order) => {
+        savedOrder = entity;
+        return entity;
+      }),
     };
     itemRepository = {
       create: vi.fn((input: Partial<OrderItem>) =>
@@ -100,14 +116,13 @@ describe('OrdersService', () => {
         throw new Error('Unexpected repository');
       }),
     };
-    const dataSource = {
-      transaction: vi.fn(
-        (
-          _isolation: string,
-          callback: (transactionManager: EntityManager) => Promise<unknown>,
-        ) => callback(manager as unknown as EntityManager),
-      ),
-    };
+    transaction = vi.fn(
+      (
+        _isolation: string,
+        callback: (transactionManager: EntityManager) => Promise<unknown>,
+      ) => callback(manager as unknown as EntityManager),
+    );
+    const dataSource = { transaction };
 
     service = new OrdersService(
       dataSource as unknown as DataSource,
@@ -142,6 +157,12 @@ describe('OrdersService', () => {
     expect(topping.stockQuantity).toBe(3);
     expect(orderRepository.save).toHaveBeenCalledTimes(1);
     expect(itemRepository.save).toHaveBeenCalledTimes(1);
+    expect(transaction).toHaveBeenCalledWith(
+      'SERIALIZABLE',
+      expect.any(Function),
+    );
+    expect(productQuery.setLock).toHaveBeenCalledWith('pessimistic_write');
+    expect(toppingQuery.setLock).toHaveBeenCalledWith('pessimistic_write');
   });
 
   it('rejects insufficient stock without creating an order', async () => {
@@ -162,5 +183,35 @@ describe('OrdersService', () => {
     expect(orderRepository.save).not.toHaveBeenCalled();
     expect(itemRepository.save).not.toHaveBeenCalled();
     expect(product.stockQuantity).toBe(1);
+  });
+
+  it('replays an identical idempotent order without decrementing stock twice', async () => {
+    const dto: CreateOrderDto = {
+      items: [{ productId: PRODUCT_ID, sizeId: SIZE_ID, quantity: 2 }],
+    };
+
+    const first = await service.createOrder(USER_ID, IDEMPOTENCY_KEY, dto);
+    const replay = await service.createOrder(USER_ID, IDEMPOTENCY_KEY, dto);
+
+    expect(replay).toEqual(first);
+    expect(product.stockQuantity).toBe(3);
+    expect(orderRepository.save).toHaveBeenCalledTimes(1);
+    expect(itemRepository.save).toHaveBeenCalledTimes(1);
+    expect(productQuery.setLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects reusing an idempotency key for a different order payload', async () => {
+    await service.createOrder(USER_ID, IDEMPOTENCY_KEY, {
+      items: [{ productId: PRODUCT_ID, sizeId: SIZE_ID, quantity: 2 }],
+    });
+
+    await expect(
+      service.createOrder(USER_ID, IDEMPOTENCY_KEY, {
+        items: [{ productId: PRODUCT_ID, sizeId: SIZE_ID, quantity: 1 }],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(product.stockQuantity).toBe(3);
+    expect(orderRepository.save).toHaveBeenCalledTimes(1);
   });
 });

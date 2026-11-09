@@ -16,7 +16,24 @@ import type {
  * build lại image. Mặc định trỏ về API chạy cùng Docker Compose.
  */
 export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+function getApiUrl() {
+  if (typeof window === 'undefined') return API_URL;
+
+  const configuredUrl = new URL(API_URL);
+  const apiUsesLoopback = ['localhost', '127.0.0.1'].includes(
+    configuredUrl.hostname,
+  );
+  const pageUsesLoopback = ['localhost', '127.0.0.1'].includes(
+    window.location.hostname,
+  );
+  if (apiUsesLoopback && !pageUsesLoopback) {
+    configuredUrl.hostname = window.location.hostname;
+    return configuredUrl.origin;
+  }
+  return API_URL;
+}
 
 /**
  * Lỗi API đã được chuẩn hoá, mang theo mã HTTP để giao diện hiển thị
@@ -60,7 +77,7 @@ async function request<T>(
   let response: Response;
 
   try {
-    response = await fetch(`${API_URL}${path}`, {
+    response = await fetch(`${getApiUrl()}${path}`, {
       method: options.method ?? 'GET',
       signal: options.signal,
       headers,
@@ -234,5 +251,31 @@ export function fetchPayment(paymentId: string): Promise<PaymentSummary> {
   return request<PaymentSummary>(
     `/payments/${encodeURIComponent(paymentId)}`,
     { authenticated: true },
+  );
+}
+
+export function simulateQrPayment(
+  paymentId: string,
+  scanToken: string,
+): Promise<PaymentSummary> {
+  return request<PaymentSummary>(
+    `/payments/${encodeURIComponent(paymentId)}/mock-scan`,
+    { method: 'POST', body: { scanToken } },
+  );
+}
+
+export function cancelQrPayment(paymentId: string): Promise<PaymentSummary> {
+  return request<PaymentSummary>(
+    `/payments/${encodeURIComponent(paymentId)}/mock-cancel`,
+    { method: 'POST', authenticated: true },
+  );
+}
+
+export function simulateCardPaymentResult(
+  paymentId: string,
+): Promise<PaymentSummary> {
+  return request<PaymentSummary>(
+    `/payments/${encodeURIComponent(paymentId)}/mock-result`,
+    { method: 'POST', authenticated: true },
   );
 }

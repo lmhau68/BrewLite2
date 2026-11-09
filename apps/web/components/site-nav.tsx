@@ -5,13 +5,13 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useSyncExternalStore, useState } from 'react';
 import { fetchCurrentUser } from '@/lib/api';
 import { clearAccessToken, getAccessToken, subscribeToAuth } from '@/lib/auth';
-import { clearStoredCart, subscribeToCart, useCart } from '@/lib/cart';
+import { subscribeToCart, useCart } from '@/lib/cart';
 import type { PublicUser } from '@/lib/types';
 
 export function SiteNav() {
   const router = useRouter();
   const token = useSyncExternalStore(subscribeToAuth, getAccessToken, () => null);
-  const { itemCount, clear } = useCart();
+  const { itemCount } = useCart();
   const [cartCount, setCartCount] = useState(itemCount);
   const [user, setUser] = useState<PublicUser | null>(null);
 
@@ -37,8 +37,6 @@ export function SiteNav() {
   }, [token]);
 
   function signOut() {
-    clearStoredCart();
-    clear();
     clearAccessToken();
     router.push('/');
   }

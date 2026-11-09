@@ -18,6 +18,7 @@
     "seed": "tsx src/database/seed/run-seed.ts",
     "lint": "oxlint --type-aware src/ test/",
     "test": "vitest run",
+    "test:integration": "vitest run --config ./vitest.config.e2e.ts",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",

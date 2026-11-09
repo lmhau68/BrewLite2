@@ -79,6 +79,7 @@ export interface PaymentRecord {
   transactionId: string | null;
   bankCode: string | null;
   maskedAccount: string | null;
+  qrScanToken?: string | null;
   createdAt: string;
 }
 

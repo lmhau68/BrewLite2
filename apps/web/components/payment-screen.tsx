@@ -3,11 +3,19 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
-import { useCallback, useEffect, useState } from 'react';
-import { ApiError, fetchOrder, fetchPayment, submitPayment } from '@/lib/api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ApiError,
+  cancelQrPayment,
+  fetchOrder,
+  fetchPayment,
+  simulateCardPaymentResult,
+  submitPayment,
+} from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
 import { useCart } from '@/lib/cart';
 import { formatPrice } from '@/lib/format';
+import { getPhoneReachableOrigin } from '@/lib/phone-origin';
 import type { Order, PaymentRecord } from '@/lib/types';
 
 const PROCESSED_PREFIX = 'brewlite-payment-cart-processed:';
@@ -30,6 +38,12 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
+  const [browserOrigin, setBrowserOrigin] = useState('');
+  const autoQrOrderId = useRef<string | null>(null);
+
+  useEffect(() => {
+    setBrowserOrigin(window.location.origin);
+  }, []);
 
   const syncPurchasedItems = useCallback(
     (completed: Pick<PaymentRecord, 'id' | 'status'>, purchasedItems: Order['items']) => {
@@ -39,7 +53,7 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
       try {
         if (
           processedPayments.has(completed.id) ||
-          window.sessionStorage.getItem(processedKey)
+          window.localStorage.getItem(processedKey)
         ) return;
         const quantities = new Map<string, number>();
         for (const item of purchasedItems) {
@@ -62,7 +76,7 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
         );
         processedPayments.add(completed.id);
         try {
-          window.sessionStorage.setItem(processedKey, 'true');
+          window.localStorage.setItem(processedKey, 'true');
         } catch (storageError) {
           console.error('Unable to persist payment cart completion.', storageError);
         }
@@ -74,6 +88,33 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
     },
     [cartInitialized, lines, removePurchased],
   );
+
+  const createQrPayment = useCallback(async () => {
+    setError('');
+    setStatusMessage('');
+    setSubmitting(true);
+    try {
+      const result = await submitPayment(
+        { orderId, method: 'WALLET' },
+        crypto.randomUUID(),
+      );
+      setPayment(result);
+      setOrder((current) =>
+        current ? { ...current, status: result.orderStatus } : current,
+      );
+      setStatusMessage(
+        'Mã QR đã sẵn sàng. Chỉ khi điện thoại quét và mở liên kết, giao dịch mới được xác nhận.',
+      );
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : 'Không thể tạo giao dịch QR. Vui lòng thử lại.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }, [orderId]);
 
   const loadOrder = useCallback(async () => {
     if (!getAccessToken()) {
@@ -89,13 +130,31 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
       const pendingPayment = payments.find(
         (item) => item.status === 'PENDING',
       );
-      if (pendingPayment) setPayment(pendingPayment);
-      const successfulPayment = payments.find(
-        (item) => item.status === 'SUCCESS',
-      );
-      if (successfulPayment) {
-        setPayment(successfulPayment);
-        syncPurchasedItems(successfulPayment, currentOrder.items);
+      if (pendingPayment) {
+        setPayment(await fetchPayment(pendingPayment.id));
+      } else {
+        const successfulPayment = payments.find(
+          (item) => item.status === 'SUCCESS',
+        );
+        if (successfulPayment) {
+          setPayment(successfulPayment);
+          syncPurchasedItems(successfulPayment, currentOrder.items);
+        } else {
+          const latestPayment = payments[0];
+          if (latestPayment?.status === 'FAILED') {
+            setPayment(latestPayment);
+            setMethod(latestPayment.method);
+          } else if (
+            (currentOrder.status === 'PENDING' ||
+              currentOrder.status === 'PAYMENT_FAILED') &&
+            autoQrOrderId.current !== currentOrder.id
+          ) {
+            setPayment(null);
+            setMethod('WALLET');
+            autoQrOrderId.current = currentOrder.id;
+            void createQrPayment();
+          }
+        }
       }
     } catch (cause) {
       setError(
@@ -106,14 +165,54 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
     } finally {
       setLoading(false);
     }
-  }, [orderId, router, syncPurchasedItems]);
+  }, [createQrPayment, orderId, router, syncPurchasedItems]);
 
   useEffect(() => {
     void loadOrder();
   }, [loadOrder]);
 
+  useEffect(() => {
+    if (payment?.status !== 'PENDING') return;
+    let active = true;
+    const pendingPayment = payment;
+    const purchasedItems = order?.items;
+    const timer = window.setInterval(() => {
+      void fetchPayment(pendingPayment.id)
+        .then((result) => {
+          if (!active) return;
+          setPayment(result);
+          setOrder((current) =>
+            current && current.status !== result.orderStatus
+              ? { ...current, status: result.orderStatus }
+              : current,
+          );
+          if (result.status === 'SUCCESS' && purchasedItems) {
+            syncPurchasedItems(result, purchasedItems);
+          } else if (result.status === 'FAILED') {
+            setStatusMessage('Thanh toán thất bại. Bạn có thể tạo giao dịch mới để thử lại.');
+          }
+        })
+        .catch((cause) => {
+          if (!active) return;
+          setError(
+            cause instanceof ApiError
+              ? cause.message
+              : 'Không thể tự làm mới trạng thái thanh toán.',
+          );
+        });
+    }, 2000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [order?.items, payment?.id, payment?.status, syncPurchasedItems]);
+
   async function pay() {
     if (!order) return;
+    if (method === 'WALLET') {
+      await createQrPayment();
+      return;
+    }
     setError('');
     setStatusMessage('');
     setSubmitting(true);
@@ -121,8 +220,9 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
       const result = await submitPayment(
         {
           orderId,
-          method,
-          ...(method === 'CARD' ? { bankCode, accountNumber } : {}),
+          method: 'CARD',
+          bankCode,
+          accountNumber,
         },
         crypto.randomUUID(),
       );
@@ -136,7 +236,9 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
         setStatusMessage('Thanh toán thất bại. Bạn có thể thử lại trên đơn này.');
       }
       if (result.status === 'PENDING') {
-        setStatusMessage('Chưa xác định kết quả. Hãy tra cứu giao dịch trước khi thử lại.');
+        setStatusMessage(
+          'Chưa xác định kết quả. Hãy tra cứu giao dịch trước khi thử lại.',
+        );
       }
     } catch (cause) {
       setError(
@@ -161,6 +263,27 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
     }
   }
 
+  async function cancelQr() {
+    if (!payment) return;
+    setError('');
+    setStatusMessage('');
+    setSubmitting(true);
+    try {
+      const result = await cancelQrPayment(payment.id);
+      setPayment(result);
+      setMethod('CARD');
+      setStatusMessage('Đã hủy giao dịch QR. Bạn có thể chọn thanh toán thẻ.');
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : 'Không thể hủy giao dịch QR. Vui lòng tra cứu lại trạng thái.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function checkStatus() {
     if (!payment) {
       await loadOrder();
@@ -180,7 +303,9 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
         setStatusMessage('Giao dịch thất bại xác định. Bạn có thể thử lại.');
       }
       if (result.status === 'PENDING') {
-        setStatusMessage('Giao dịch vẫn đang được xác minh. Vui lòng tra cứu lại sau.');
+        setStatusMessage(
+          'Giao dịch vẫn đang chờ xác nhận. Tra cứu trạng thái không tự xác nhận thanh toán.',
+        );
       }
     } catch (cause) {
       setError(
@@ -188,6 +313,37 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
           ? cause.message
           : 'Không tra cứu được giao dịch. Vui lòng thử lại.',
       );
+    }
+  }
+
+  async function simulateCardResult() {
+    if (!payment) return;
+    setError('');
+    setStatusMessage('');
+    setSubmitting(true);
+    try {
+      const result = await simulateCardPaymentResult(payment.id);
+      setPayment(result);
+      setOrder((current) =>
+        current ? { ...current, status: result.orderStatus } : current,
+      );
+      if (result.status === 'SUCCESS' && order) {
+        syncPurchasedItems(result, order.items);
+      } else if (result.status === 'FAILED') {
+        setStatusMessage('Thanh toán thất bại. Bạn có thể tạo giao dịch mới để thử lại.');
+      } else {
+        setStatusMessage(
+          'Kết quả chưa xác định; giao dịch vẫn chờ. Hãy tra cứu lại hoặc thử mô phỏng xác nhận sau.',
+        );
+      }
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : 'Không xác nhận được giao dịch mô phỏng. Vui lòng thử lại.',
+      );
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -206,13 +362,18 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
 
   if (!order) return null;
 
-  const qrValue = JSON.stringify({
-    provider: 'BREWLITE_MOCK_WALLET',
-    orderId: order.id,
-    orderCode: order.orderCode,
-    amount: order.totalAmount,
-    currency: 'VND',
-  });
+  let qrValue = '';
+  if (browserOrigin && payment?.method === 'WALLET' && payment.qrScanToken) {
+    const scanUrl = new URL(
+      '/mock-payment/scan',
+      getPhoneReachableOrigin(browserOrigin),
+    );
+    scanUrl.hash = new URLSearchParams({
+      paymentId: payment.id,
+      token: payment.qrScanToken,
+    }).toString();
+    qrValue = scanUrl.toString();
+  }
   const canPay =
     (order.status === 'PENDING' || order.status === 'PAYMENT_FAILED') &&
     payment?.status !== 'PENDING';
@@ -238,6 +399,7 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
               aria-selected={method === 'WALLET'}
               className={method === 'WALLET' ? 'payment-tabs__item is-active' : 'payment-tabs__item'}
               onClick={() => setMethod('WALLET')}
+              disabled={submitting}
             >
               Ví điện tử (QR)
             </button>
@@ -247,14 +409,19 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
               aria-selected={method === 'CARD'}
               className={method === 'CARD' ? 'payment-tabs__item is-active' : 'payment-tabs__item'}
               onClick={() => setMethod('CARD')}
+              disabled={submitting}
             >
               Thẻ / Ngân hàng
             </button>
           </div>
           {method === 'WALLET' ? (
             <div className="qr-panel">
-              <QRCodeSVG value={qrValue} size={192} level="M" includeMargin />
-              <p>QR mô phỏng chứa mã đơn và số tiền.</p>
+              <p>
+                {submitting
+                  ? 'Đang tạo mã QR để quét bằng điện thoại...'
+                  : 'Mã QR sẽ sẵn sàng ngay khi tạo giao dịch.'}
+              </p>
+              <p className="muted">Giao dịch chỉ thành công sau khi điện thoại mở liên kết QR.</p>
               <p className="muted">{order.orderCode} · {formatPrice(order.totalAmount)}</p>
             </div>
           ) : (
@@ -297,7 +464,13 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
             }
             onClick={pay}
           >
-            {submitting ? 'Đang xử lý...' : 'Xác nhận thanh toán'}
+            {submitting
+              ? 'Đang xử lý...'
+              : method === 'WALLET'
+                ? payment?.status === 'FAILED'
+                  ? 'Tạo giao dịch QR mới'
+                  : 'Thử tạo lại mã QR'
+                : 'Xác nhận thanh toán'}
           </button>
         </section>
       ) : (
@@ -306,24 +479,62 @@ export function PaymentScreen({ orderId }: PaymentScreenProps) {
             {payment?.status === 'SUCCESS'
               ? 'Thanh toán thành công.'
               : payment?.status === 'PENDING'
-                ? 'Giao dịch đang được xác minh; chưa thể gửi thêm thanh toán.'
+                ? payment.method === 'WALLET'
+                  ? 'Đang chờ quét QR. Khi điện thoại mở liên kết, trạng thái sẽ tự cập nhật.'
+                  : 'Giao dịch đang được xác minh; chưa thể gửi thêm thanh toán.'
                 : 'Đơn hàng không còn ở trạng thái chờ thanh toán.'}
           </p>
+          {statusMessage ? <p className="notice" role="status">{statusMessage}</p> : null}
           {payment?.status === 'PENDING' ? (
-            <button className="button" type="button" onClick={checkStatus}>
-              Tra cứu giao dịch
-            </button>
+            <>
+              {payment.method === 'WALLET' ? (
+                <div className="qr-panel">
+                  {qrValue ? (
+                    <QRCodeSVG value={qrValue} size={192} level="M" includeMargin />
+                  ) : (
+                    <p>Đang tạo mã QR để quét bằng điện thoại...</p>
+                  )}
+                  <p>
+                    Dùng camera điện thoại quét mã và mở liên kết. Trang này sẽ tự
+                    cập nhật khi điện thoại xác nhận.
+                  </p>
+                  <p className="muted">
+                    QR mô phỏng, không kết nối ứng dụng ngân hàng và không nhận tiền thật.
+                  </p>
+                  {error ? <p className="notice notice--error" role="alert">{error}</p> : null}
+                </div>
+              ) : (
+                <button
+                  className="button"
+                  type="button"
+                  disabled={submitting}
+                  onClick={simulateCardResult}
+                >
+                  {submitting
+                    ? 'Đang xác nhận...'
+                    : 'Mô phỏng nhận kết quả ngân hàng'}
+                </button>
+              )}
+              {payment.method === 'WALLET' ? (
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  disabled={submitting}
+                  onClick={cancelQr}
+                >
+                  {submitting ? 'Đang xử lý...' : 'Hủy QR và chọn thẻ'}
+                </button>
+              ) : null}
+              <button className="button button--secondary" type="button" onClick={checkStatus}>
+                Tra cứu trạng thái giao dịch
+              </button>
+            </>
           ) : null}
           <Link className="button button--link" href={`/orders/${order.id}`}>
             Xem chi tiết đơn
           </Link>
         </section>
       )}
-      {payment?.status === 'PENDING' ? (
-        <button className="button button--secondary" type="button" onClick={checkStatus}>
-          Tra cứu kết quả thanh toán
-        </button>
-      ) : null}
       <p className="muted payment-disclaimer">
         Đây là luồng thử nghiệm nội bộ, không kết nối ngân hàng và không xử lý tiền thật.
       </p>

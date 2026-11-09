@@ -9,9 +9,20 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import {
+  getAccessToken,
+  getAccessTokenSubject,
+  subscribeToAuth,
+} from './auth';
 
 const CART_KEY = 'brewlite-cart-v1';
 const CART_EVENT = 'brewlite-cart-changed';
+
+interface CartState {
+  ownerId: string | null;
+  lines: CartLine[];
+  initialized: boolean;
+}
 
 export interface CartTopping {
   id: string;
@@ -78,91 +89,120 @@ function isCartLine(value: unknown): value is CartLine {
 }
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [lines, setLines] = useState<CartLine[]>([]);
-  const [initialized, setInitialized] = useState(false);
+  const [cart, setCart] = useState<CartState>({
+    ownerId: null,
+    lines: [],
+    initialized: false,
+  });
+
+  const storageKey = (ownerId: string | null) =>
+    ownerId ? `${CART_KEY}:user:${ownerId}` : `${CART_KEY}:guest`;
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(CART_KEY);
-      if (saved) {
-        const parsed: unknown = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.every(isCartLine)) {
-          setLines(parsed);
-        } else {
-          console.error('Stored BrewLite cart has an invalid shape.');
-          window.localStorage.removeItem(CART_KEY);
+    const loadCartForSession = () => {
+      const ownerId = getAccessTokenSubject(getAccessToken());
+      let lines: CartLine[] = [];
+      const key = storageKey(ownerId);
+      try {
+        const saved = window.localStorage.getItem(key);
+        if (saved) {
+          const parsed: unknown = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.every(isCartLine)) {
+            lines = parsed;
+          } else {
+            console.error('Stored BrewLite cart has an invalid shape.');
+            window.localStorage.removeItem(key);
+          }
         }
+      } catch (error) {
+        console.error('Unable to load the BrewLite cart from browser storage.', error);
       }
-    } catch (error) {
-      console.error('Unable to load the BrewLite cart from browser storage.', error);
-    } finally {
-      setInitialized(true);
-    }
+      setCart({ ownerId, lines, initialized: true });
+    };
+
+    loadCartForSession();
+    return subscribeToAuth(loadCartForSession);
   }, []);
 
   useEffect(() => {
-    if (!initialized) return;
+    if (!cart.initialized) return;
     try {
-      window.localStorage.setItem(CART_KEY, JSON.stringify(lines));
+      window.localStorage.setItem(
+        storageKey(cart.ownerId),
+        JSON.stringify(cart.lines),
+      );
       window.dispatchEvent(new Event(CART_EVENT));
     } catch (error) {
       console.error('Unable to save the BrewLite cart to browser storage.', error);
     }
-  }, [initialized, lines]);
+  }, [cart]);
 
   const addItem = useCallback((item: AddCartLine) => {
     const toppingKey = item.toppings.map((topping) => topping.id).sort().join(',');
-    setLines((current) => {
-      const existing = current.find(
+    setCart((current) => {
+      const existing = current.lines.find(
         (line) =>
           line.productId === item.productId &&
           line.sizeId === item.sizeId &&
           line.toppings.map((topping) => topping.id).sort().join(',') === toppingKey,
       );
-      if (existing) {
-        return current.map((line) =>
-          line.id === existing.id
-            ? { ...line, quantity: Math.min(99, line.quantity + item.quantity) }
-            : line,
-        );
-      }
-      return [...current, { ...item, quantity: Math.min(99, item.quantity), id: crypto.randomUUID() }];
+      const lines = existing
+        ? current.lines.map((line) =>
+            line.id === existing.id
+              ? { ...line, quantity: Math.min(99, line.quantity + item.quantity) }
+              : line,
+          )
+        : [
+            ...current.lines,
+            { ...item, quantity: Math.min(99, item.quantity), id: crypto.randomUUID() },
+          ];
+      return { ...current, lines };
     });
   }, []);
 
   const updateQuantity = useCallback((lineId: string, quantity: number) => {
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) return;
-    setLines((current) =>
-      current.map((line) => (line.id === lineId ? { ...line, quantity } : line)),
-    );
+    setCart((current) => ({
+      ...current,
+      lines: current.lines.map((line) =>
+        line.id === lineId ? { ...line, quantity } : line,
+      ),
+    }));
   }, []);
 
   const removeItem = useCallback((lineId: string) => {
-    setLines((current) => current.filter((line) => line.id !== lineId));
+    setCart((current) => ({
+      ...current,
+      lines: current.lines.filter((line) => line.id !== lineId),
+    }));
   }, []);
 
   const removePurchased = useCallback(
     (purchased: Array<{ lineId: string; quantity: number }>) => {
       const amounts = new Map(purchased.map((item) => [item.lineId, item.quantity]));
-      setLines((current) =>
-        current
+      setCart((current) => ({
+        ...current,
+        lines: current.lines
           .map((line) => ({
             ...line,
             quantity: line.quantity - (amounts.get(line.id) ?? 0),
           }))
           .filter((line) => line.quantity > 0),
-      );
+      }));
     },
     [],
   );
 
-  const clear = useCallback(() => setLines([]), []);
+  const clear = useCallback(
+    () => setCart((current) => ({ ...current, lines: [] })),
+    [],
+  );
   const value = useMemo(
     () => ({
-      lines,
-      initialized,
-      itemCount: lines.reduce((total, line) => total + line.quantity, 0),
-      totalAmount: lines.reduce(
+      lines: cart.lines,
+      initialized: cart.initialized,
+      itemCount: cart.lines.reduce((total, line) => total + line.quantity, 0),
+      totalAmount: cart.lines.reduce(
         (total, line) => total + line.unitPrice * line.quantity,
         0,
       ),
@@ -172,7 +212,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       removePurchased,
       clear,
     }),
-    [addItem, clear, initialized, lines, removeItem, removePurchased, updateQuantity],
+    [addItem, cart, clear, removeItem, removePurchased, updateQuantity],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
@@ -189,7 +229,11 @@ export function useOptionalCart() {
 }
 
 export function clearStoredCart() {
-  window.localStorage.removeItem(CART_KEY);
+  const ownerId = getAccessTokenSubject(getAccessToken());
+  const key = ownerId
+    ? `${CART_KEY}:user:${ownerId}`
+    : `${CART_KEY}:guest`;
+  window.localStorage.removeItem(key);
   window.dispatchEvent(new Event(CART_EVENT));
 }
 

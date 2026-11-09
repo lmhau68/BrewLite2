@@ -1,4 +1,8 @@
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource, EntityManager } from 'typeorm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +24,7 @@ describe('PaymentsService', () => {
   let order: Order;
   let storedPayments: Payment[];
   let paymentRepository: {
+    createQueryBuilder: ReturnType<typeof vi.fn>;
     findOne: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     save: ReturnType<typeof vi.fn>;
@@ -28,10 +33,20 @@ describe('PaymentsService', () => {
     createQueryBuilder: ReturnType<typeof vi.fn>;
     save: ReturnType<typeof vi.fn>;
   };
+  let paymentLookupQuery: {
+    innerJoin: ReturnType<typeof vi.fn>;
+    select: ReturnType<typeof vi.fn>;
+    where: ReturnType<typeof vi.fn>;
+    getOne: ReturnType<typeof vi.fn>;
+  };
+  let lookupPaymentId: string | undefined;
+  let paymentSequence: number;
   let outcome: string;
 
   beforeEach(() => {
     outcome = 'SUCCESS';
+    lookupPaymentId = undefined;
+    paymentSequence = 4;
     order = Object.assign(new Order(), {
       id: ORDER_ID,
       userId: USER_ID,
@@ -49,9 +64,25 @@ describe('PaymentsService', () => {
     };
     orderRepository = {
       createQueryBuilder: vi.fn().mockReturnValue(queryBuilder),
+      findOne: vi.fn(async () => order),
       save: vi.fn(async (entity: Order) => entity),
     };
+    paymentLookupQuery = {
+      innerJoin: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      where: vi.fn((_condition: string, parameters: { paymentId: string }) => {
+        lookupPaymentId = parameters.paymentId;
+        return paymentLookupQuery;
+      }),
+      getOne: vi.fn(async () => {
+        const payment = storedPayments.find(
+          (item) => item.id === lookupPaymentId,
+        );
+        return payment ? { id: payment.id, orderId: payment.orderId } : null;
+      }),
+    };
     paymentRepository = {
+      createQueryBuilder: vi.fn().mockReturnValue(paymentLookupQuery),
       findOne: vi.fn(async ({ where }: { where: Partial<Payment> }) => {
         if (where.idempotencyKey) {
           return (
@@ -60,11 +91,20 @@ describe('PaymentsService', () => {
             ) ?? null
           );
         }
+        if (where.id) {
+          return storedPayments.find((payment) => payment.id === where.id) ?? null;
+        }
+        if (where.status) {
+          return (
+            storedPayments.find((payment) => payment.status === where.status) ??
+            null
+          );
+        }
         return null;
       }),
       create: vi.fn((input: Partial<Payment>) =>
         Object.assign(new Payment(), input, {
-          id: '00000000-0000-4000-8000-000000000004',
+          id: `00000000-0000-4000-8000-${String(paymentSequence++).padStart(12, '0')}`,
           createdAt: new Date(),
         }),
       ),
@@ -135,7 +175,71 @@ describe('PaymentsService', () => {
     expect(order.status).toBe(OrderStatus.PAID);
   });
 
-  it('keeps an unknown payment pending for lookup before retry', async () => {
+  it('rejects reusing a payment idempotency key for a different request', async () => {
+    await service.processMockPayment(USER_ID, IDEMPOTENCY_KEY, {
+      orderId: ORDER_ID,
+      method: PaymentMethod.WALLET,
+    });
+
+    await expect(
+      service.processMockPayment(USER_ID, IDEMPOTENCY_KEY, {
+        orderId: ORDER_ID,
+        method: PaymentMethod.CARD,
+        bankCode: 'VCB',
+        accountNumber: '123456789012',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(paymentRepository.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates a QR payment pending and only resolves it through scan simulation', async () => {
+    const result = await service.processMockPayment(USER_ID, IDEMPOTENCY_KEY, {
+      orderId: ORDER_ID,
+      method: PaymentMethod.WALLET,
+    });
+
+    expect(result.status).toBe(PaymentStatus.PENDING);
+    expect(result.orderStatus).toBe(OrderStatus.PENDING);
+    expect(result.qrScanToken).toEqual(expect.any(String));
+    expect(paymentRepository.save).toHaveBeenCalledTimes(2);
+    expect(orderRepository.save).not.toHaveBeenCalled();
+
+    await expect(
+      service.simulateQrScan(result.id, 'invalid-token'),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    const scanned = await service.simulateQrScan(
+      result.id,
+      result.qrScanToken,
+    );
+    expect(scanned.status).toBe(PaymentStatus.SUCCESS);
+    expect(scanned.orderStatus).toBe(OrderStatus.PAID);
+    expect(scanned.qrScanToken).toBeNull();
+  });
+
+  it('cancels a pending QR without allowing its scan to pay the order', async () => {
+    const pending = await service.processMockPayment(USER_ID, IDEMPOTENCY_KEY, {
+      orderId: ORDER_ID,
+      method: PaymentMethod.WALLET,
+    });
+
+    const cancelled = await service.cancelQrPayment(pending.id, USER_ID);
+
+    expect(cancelled.status).toBe(PaymentStatus.FAILED);
+    expect(cancelled.orderStatus).toBe(OrderStatus.PENDING);
+    expect(order.status).toBe(OrderStatus.PENDING);
+    expect(storedPayments[0].gatewayResponse).toBe('MOCK_CANCELLED');
+
+    const scanned = await service.simulateQrScan(
+      pending.id,
+      pending.qrScanToken,
+    );
+    expect(scanned.status).toBe(PaymentStatus.FAILED);
+    expect(scanned.orderStatus).toBe(OrderStatus.PENDING);
+    expect(orderRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps a timed-out QR pending on status lookup and scan until resolved', async () => {
     outcome = 'TIMEOUT';
     const result = await service.processMockPayment(USER_ID, IDEMPOTENCY_KEY, {
       orderId: ORDER_ID,
@@ -145,17 +249,89 @@ describe('PaymentsService', () => {
     expect(result.status).toBe(PaymentStatus.PENDING);
     expect(result.orderStatus).toBe(OrderStatus.PENDING);
     expect(order.status).toBe(OrderStatus.PENDING);
+
+    const stillPending = await service.simulateQrScan(
+      result.id,
+      result.qrScanToken,
+    );
+    expect(stillPending.status).toBe(PaymentStatus.PENDING);
+
+    outcome = 'SUCCESS';
+    const statusOnly = await service.findMine(result.id, USER_ID);
+    expect(statusOnly.status).toBe(PaymentStatus.PENDING);
+    expect(order.status).toBe(OrderStatus.PENDING);
+
+    const resolved = await service.simulateQrScan(
+      result.id,
+      result.qrScanToken,
+    );
+    expect(resolved.status).toBe(PaymentStatus.SUCCESS);
+    expect(resolved.orderStatus).toBe(OrderStatus.PAID);
+    expect(order.status).toBe(OrderStatus.PAID);
   });
 
-  it('records a definite failure and allows a later key at the service boundary', async () => {
+  it('records a failed QR scan without paying the order', async () => {
     outcome = 'FAILED';
-    const result = await service.processMockPayment(USER_ID, IDEMPOTENCY_KEY, {
+    const pending = await service.processMockPayment(USER_ID, IDEMPOTENCY_KEY, {
       orderId: ORDER_ID,
       method: PaymentMethod.WALLET,
     });
 
+    const failed = await service.simulateQrScan(
+      pending.id,
+      pending.qrScanToken,
+    );
+    expect(failed.status).toBe(PaymentStatus.FAILED);
+    expect(failed.orderStatus).toBe(OrderStatus.PAYMENT_FAILED);
+    expect(order.status).toBe(OrderStatus.PAYMENT_FAILED);
+  });
+
+  it('lets a pending card payment resolve through its mock result action', async () => {
+    outcome = 'TIMEOUT';
+    const pending = await service.processMockPayment(USER_ID, IDEMPOTENCY_KEY, {
+      orderId: ORDER_ID,
+      method: PaymentMethod.CARD,
+      bankCode: 'VCB',
+      accountNumber: '123456789012',
+    });
+    expect(pending.status).toBe(PaymentStatus.PENDING);
+
+    outcome = 'SUCCESS';
+    const resolved = await service.simulateCardResult(pending.id, USER_ID);
+    expect(resolved.status).toBe(PaymentStatus.SUCCESS);
+    expect(resolved.orderStatus).toBe(OrderStatus.PAID);
+  });
+
+  it('allows a new idempotency key after a definite QR failure', async () => {
+    outcome = 'FAILED';
+    const pending = await service.processMockPayment(USER_ID, IDEMPOTENCY_KEY, {
+      orderId: ORDER_ID,
+      method: PaymentMethod.WALLET,
+    });
+    const result = await service.simulateQrScan(
+      pending.id,
+      pending.qrScanToken,
+    );
     expect(result.status).toBe(PaymentStatus.FAILED);
     expect(result.orderStatus).toBe(OrderStatus.PAYMENT_FAILED);
-    expect(order.status).toBe(OrderStatus.PAYMENT_FAILED);
+
+    outcome = 'SUCCESS';
+    const retry = await service.processMockPayment(
+      USER_ID,
+      '00000000-0000-4000-8000-000000000005',
+      {
+        orderId: ORDER_ID,
+        method: PaymentMethod.WALLET,
+      },
+    );
+    expect(retry.status).toBe(PaymentStatus.PENDING);
+
+    const resolved = await service.simulateQrScan(
+      retry.id,
+      retry.qrScanToken,
+    );
+    expect(resolved.status).toBe(PaymentStatus.SUCCESS);
+    expect(resolved.orderStatus).toBe(OrderStatus.PAID);
+    expect(order.status).toBe(OrderStatus.PAID);
   });
 });

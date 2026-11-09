@@ -1,10 +1,16 @@
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import {
+  createHash,
+  createHmac,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
@@ -96,6 +102,12 @@ export class PaymentsService {
       });
       await payments.save(payment);
 
+      if (dto.method === PaymentMethod.WALLET) {
+        payment.gatewayResponse = 'MOCK_QR_AWAITING_SCAN';
+        await payments.save(payment);
+        return this.toPublicPayment(payment, order.status);
+      }
+
       const outcome = this.getMockOutcome();
       if (outcome === 'SUCCESS') {
         payment.status = PaymentStatus.SUCCESS;
@@ -132,6 +144,96 @@ export class PaymentsService {
         throw new NotFoundException('Không tìm thấy giao dịch');
       }
 
+      const order = await orders.findOne({
+        where: { id: paymentReference.orderId },
+      });
+      if (!order) throw new NotFoundException('Không tìm thấy giao dịch');
+      const payment = await payments.findOne({ where: { id: paymentId } });
+      if (!payment) throw new NotFoundException('Không tìm thấy giao dịch');
+      return this.toPublicPayment(payment, order.status);
+    });
+  }
+
+  async simulateQrScan(paymentId: string, scanToken: string | undefined) {
+    this.verifyQrScanToken(paymentId, scanToken);
+    return this.simulatePaymentResult(
+      paymentId,
+      undefined,
+      PaymentMethod.WALLET,
+    );
+  }
+
+  async simulateCardResult(paymentId: string, userId: string) {
+    return this.simulatePaymentResult(paymentId, userId, PaymentMethod.CARD);
+  }
+
+  async cancelQrPayment(paymentId: string, userId: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const orders = manager.getRepository(Order);
+      const payments = manager.getRepository(Payment);
+      const paymentReference = await payments
+        .createQueryBuilder('payment')
+        .innerJoin('payment.order', 'order')
+        .select(['payment.id', 'payment.orderId'])
+        .where('payment.id = :paymentId AND order.userId = :userId', {
+          paymentId,
+          userId,
+        })
+        .getOne();
+      if (!paymentReference) {
+        throw new NotFoundException('Không tìm thấy giao dịch');
+      }
+
+      const order = await orders
+        .createQueryBuilder('order')
+        .setLock('pessimistic_write')
+        .where('order.id = :orderId', { orderId: paymentReference.orderId })
+        .getOne();
+      if (!order) throw new NotFoundException('Không tìm thấy giao dịch');
+
+      const payment = await payments.findOne({
+        where: { id: paymentId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!payment) throw new NotFoundException('Không tìm thấy giao dịch');
+      if (payment.paymentMethod !== PaymentMethod.WALLET) {
+        throw new ConflictException('Chỉ có thể hủy giao dịch QR đang chờ');
+      }
+      if (payment.status !== PaymentStatus.PENDING) {
+        throw new ConflictException('Giao dịch QR không còn ở trạng thái chờ');
+      }
+
+      payment.status = PaymentStatus.FAILED;
+      payment.gatewayResponse = 'MOCK_CANCELLED';
+      await payments.save(payment);
+      return this.toPublicPayment(payment, order.status);
+    });
+  }
+
+  private async simulatePaymentResult(
+    paymentId: string,
+    userId: string | undefined,
+    expectedMethod: PaymentMethod,
+  ) {
+    return this.dataSource.transaction(async (manager) => {
+      const orders = manager.getRepository(Order);
+      const payments = manager.getRepository(Payment);
+      const paymentQuery = payments
+        .createQueryBuilder('payment')
+        .innerJoin('payment.order', 'order')
+        .select(['payment.id', 'payment.orderId']);
+      const paymentReference = await paymentQuery
+        .where(
+          userId
+            ? 'payment.id = :paymentId AND order.userId = :userId'
+            : 'payment.id = :paymentId',
+          userId ? { paymentId, userId } : { paymentId },
+        )
+        .getOne();
+      if (!paymentReference) {
+        throw new NotFoundException('Không tìm thấy giao dịch');
+      }
+
       const order = await orders
         .createQueryBuilder('order')
         .setLock('pessimistic_write')
@@ -143,19 +245,32 @@ export class PaymentsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!payment) throw new NotFoundException('Không tìm thấy giao dịch');
-      if (payment.status === PaymentStatus.PENDING) {
-        const outcome = this.getMockOutcome();
-        if (outcome !== 'TIMEOUT') {
-          payment.status =
-            outcome === 'SUCCESS' ? PaymentStatus.SUCCESS : PaymentStatus.FAILED;
-          payment.gatewayResponse =
-            outcome === 'SUCCESS' ? 'MOCK_APPROVED' : 'MOCK_DECLINED';
-          order.status =
-            outcome === 'SUCCESS' ? OrderStatus.PAID : OrderStatus.PAYMENT_FAILED;
-          await payments.save(payment);
-          await orders.save(order);
-        }
+      if (payment.paymentMethod !== expectedMethod) {
+        throw new ConflictException(
+          expectedMethod === PaymentMethod.WALLET
+            ? 'Giao dịch này không sử dụng thanh toán QR'
+            : 'Giao dịch này không sử dụng thanh toán thẻ/ngân hàng',
+        );
       }
+      if (payment.status !== PaymentStatus.PENDING) {
+        return this.toPublicPayment(payment, order.status);
+      }
+
+      const outcome = this.getMockOutcome();
+      if (outcome === 'TIMEOUT') {
+        payment.gatewayResponse = 'MOCK_RESULT_UNKNOWN';
+        await payments.save(payment);
+        return this.toPublicPayment(payment, order.status);
+      }
+
+      payment.status =
+        outcome === 'SUCCESS' ? PaymentStatus.SUCCESS : PaymentStatus.FAILED;
+      payment.gatewayResponse =
+        outcome === 'SUCCESS' ? 'MOCK_APPROVED' : 'MOCK_DECLINED';
+      order.status =
+        outcome === 'SUCCESS' ? OrderStatus.PAID : OrderStatus.PAYMENT_FAILED;
+      await payments.save(payment);
+      await orders.save(order);
       return this.toPublicPayment(payment, order.status);
     });
   }
@@ -217,6 +332,35 @@ export class PaymentsService {
     );
   }
 
+  private verifyQrScanToken(
+    paymentId: string,
+    scanToken: string | undefined,
+  ) {
+    if (typeof scanToken !== 'string') {
+      throw new UnauthorizedException('QR thanh toán không hợp lệ');
+    }
+    const expected = Buffer.from(this.createQrScanToken(paymentId));
+    const received = Buffer.from(scanToken);
+    if (
+      received.length !== expected.length ||
+      !timingSafeEqual(received, expected)
+    ) {
+      throw new UnauthorizedException('QR thanh toán không hợp lệ');
+    }
+  }
+
+  private createQrScanToken(paymentId: string) {
+    const secret = this.configService.get<string>('JWT_SECRET');
+    if (!secret) {
+      throw new InternalServerErrorException(
+        'JWT_SECRET phải được cấu hình trước khi thanh toán',
+      );
+    }
+    return createHmac('sha256', secret)
+      .update(`brewlite-mock-qr:${paymentId}`)
+      .digest('base64url');
+  }
+
   private toPublicPayment(payment: Payment, orderStatus: OrderStatus) {
     return {
       id: payment.id,
@@ -229,6 +373,11 @@ export class PaymentsService {
       maskedAccount: payment.accountLast4
         ? `****${payment.accountLast4}`
         : null,
+      qrScanToken:
+        payment.paymentMethod === PaymentMethod.WALLET &&
+        payment.status === PaymentStatus.PENDING
+          ? this.createQrScanToken(payment.id)
+          : null,
       orderStatus,
       createdAt: payment.createdAt,
     };

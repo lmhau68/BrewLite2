@@ -18,7 +18,10 @@ import {
   OrderItem,
   ToppingSnapshot,
 } from '../../database/entities/order-item.entity.js';
-import { Payment, PaymentStatus } from '../../database/entities/payment.entity.js';
+import {
+  Payment,
+  PaymentStatus,
+} from '../../database/entities/payment.entity.js';
 import { Product } from '../../database/entities/product.entity.js';
 import { Topping } from '../../database/entities/topping.entity.js';
 import { User } from '../../database/entities/user.entity.js';
@@ -45,154 +48,175 @@ export class OrdersService {
     }
 
     const fingerprint = this.fingerprint(dto);
-    try {
-      return await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
-        const users = manager.getRepository(User);
-        const user = await users.findOne({
-          where: { id: userId },
-          lock: { mode: 'pessimistic_write' },
-        });
-        if (!user) throw new NotFoundException('Không tìm thấy tài khoản');
+    let retryAttempt = 0;
+    while (true) {
+      try {
+        return await this.dataSource.transaction(
+          'SERIALIZABLE',
+          async (manager) => {
+            const users = manager.getRepository(User);
+            const user = await users.findOne({
+              where: { id: userId },
+              lock: { mode: 'pessimistic_write' },
+            });
+            if (!user) throw new NotFoundException('Không tìm thấy tài khoản');
 
-        const orders = manager.getRepository(Order);
-        const existing = await orders.findOne({
-          where: { userId, idempotencyKey },
-          relations: { items: true },
-        });
-        if (existing) {
-          if (existing.requestFingerprint !== fingerprint) {
+            const orders = manager.getRepository(Order);
+            const existing = await orders.findOne({
+              where: { userId, idempotencyKey },
+              relations: { items: true },
+            });
+            if (existing) {
+              if (existing.requestFingerprint !== fingerprint) {
+                throw new ConflictException(
+                  'Idempotency-Key đã được dùng với giỏ hàng khác',
+                );
+              }
+              return this.toPublicOrder(existing);
+            }
+
+            const productRepo = manager.getRepository(Product);
+            const toppingRepo = manager.getRepository(Topping);
+            const itemRepo = manager.getRepository(OrderItem);
+            const itemSnapshots: Array<Partial<OrderItem>> = [];
+            let totalAmount = 0;
+
+            for (const requestedItem of dto.items) {
+              const product = await productRepo
+                .createQueryBuilder('product')
+                .setLock('pessimistic_write')
+                .where('product.id = :id', { id: requestedItem.productId })
+                .getOne();
+              if (!product) {
+                throw new UnprocessableEntityException(
+                  'Sản phẩm không còn tồn tại',
+                );
+              }
+              if (
+                !product.isAvailable ||
+                product.stockQuantity < requestedItem.quantity
+              ) {
+                throw new ConflictException(
+                  `Sản phẩm "${product.name}" không đủ tồn kho`,
+                );
+              }
+
+              const options = await productRepo.findOne({
+                where: { id: product.id },
+                relations: { sizes: true, toppings: true },
+              });
+              if (!options)
+                throw new NotFoundException('Không tìm thấy sản phẩm');
+
+              let sizeName: string | null = null;
+              let unitPrice = product.basePrice;
+              if (options.sizes.length > 0) {
+                const size = options.sizes.find(
+                  (candidate) => candidate.id === requestedItem.sizeId,
+                );
+                if (!size) {
+                  throw new UnprocessableEntityException(
+                    `Kích thước không hợp lệ cho "${product.name}"`,
+                  );
+                }
+                sizeName = size.sizeName;
+                unitPrice += size.price;
+              } else if (requestedItem.sizeId) {
+                throw new UnprocessableEntityException(
+                  `Sản phẩm "${product.name}" không có lựa chọn kích thước`,
+                );
+              }
+
+              const supportedToppings = new Map(
+                options.toppings.map((topping) => [topping.id, topping]),
+              );
+              const toppingSnapshots: ToppingSnapshot[] = [];
+              for (const toppingId of [
+                ...(requestedItem.toppingIds ?? []),
+              ].sort()) {
+                const supported = supportedToppings.get(toppingId);
+                if (!supported) {
+                  throw new UnprocessableEntityException(
+                    `Topping không hợp lệ cho "${product.name}"`,
+                  );
+                }
+                const topping = await toppingRepo
+                  .createQueryBuilder('topping')
+                  .setLock('pessimistic_write')
+                  .where('topping.id = :id', { id: toppingId })
+                  .getOne();
+                if (
+                  !topping ||
+                  topping.stockQuantity < requestedItem.quantity
+                ) {
+                  throw new ConflictException(
+                    `Topping "${supported.name}" không đủ tồn kho`,
+                  );
+                }
+                topping.stockQuantity -= requestedItem.quantity;
+                await toppingRepo.save(topping);
+                unitPrice += topping.price;
+                toppingSnapshots.push({
+                  id: topping.id,
+                  name: topping.name,
+                  price: topping.price,
+                });
+              }
+
+              product.stockQuantity -= requestedItem.quantity;
+              await productRepo.save(product);
+              const subtotal = unitPrice * requestedItem.quantity;
+              totalAmount += subtotal;
+              itemSnapshots.push({
+                productId: product.id,
+                productName: product.name,
+                sizeId: requestedItem.sizeId ?? null,
+                sizeName,
+                toppingsSnapshot: toppingSnapshots,
+                quantity: requestedItem.quantity,
+                unitPrice,
+                subtotal,
+              });
+            }
+
+            const order = orders.create({
+              orderCode: `BL-${randomUUID().slice(0, 8).toUpperCase()}`,
+              userId,
+              status: OrderStatus.PENDING,
+              totalAmount,
+              idempotencyKey,
+              requestFingerprint: fingerprint,
+            });
+            await orders.save(order);
+            const items = itemSnapshots.map((item) =>
+              itemRepo.create({ ...item, orderId: order.id }),
+            );
+            await itemRepo.save(items);
+            order.items = items;
+            return this.toPublicOrder(order);
+          },
+        );
+      } catch (error) {
+        if (this.isRetryableTransactionError(error) && retryAttempt < 2) {
+          retryAttempt += 1;
+          continue;
+        }
+        if (this.isUniqueViolation(error)) {
+          const existing = await this.ordersRepository.findOne({
+            where: { userId, idempotencyKey },
+            relations: { items: true },
+          });
+          if (existing?.requestFingerprint === fingerprint) {
+            return this.toPublicOrder(existing);
+          }
+          if (existing) {
             throw new ConflictException(
               'Idempotency-Key đã được dùng với giỏ hàng khác',
             );
           }
-          return this.toPublicOrder(existing);
         }
-
-        const productRepo = manager.getRepository(Product);
-        const toppingRepo = manager.getRepository(Topping);
-        const itemRepo = manager.getRepository(OrderItem);
-        const itemSnapshots: Array<Partial<OrderItem>> = [];
-        let totalAmount = 0;
-
-        for (const requestedItem of dto.items) {
-          const product = await productRepo
-            .createQueryBuilder('product')
-            .setLock('pessimistic_write')
-            .where('product.id = :id', { id: requestedItem.productId })
-            .getOne();
-          if (!product) {
-            throw new UnprocessableEntityException('Sản phẩm không còn tồn tại');
-          }
-          if (!product.isAvailable || product.stockQuantity < requestedItem.quantity) {
-            throw new ConflictException(
-              `Sản phẩm "${product.name}" không đủ tồn kho`,
-            );
-          }
-
-          const options = await productRepo.findOne({
-            where: { id: product.id },
-            relations: { sizes: true, toppings: true },
-          });
-          if (!options) throw new NotFoundException('Không tìm thấy sản phẩm');
-
-          let sizeName: string | null = null;
-          let unitPrice = product.basePrice;
-          if (options.sizes.length > 0) {
-            const size = options.sizes.find(
-              (candidate) => candidate.id === requestedItem.sizeId,
-            );
-            if (!size) {
-              throw new UnprocessableEntityException(
-                `Kích thước không hợp lệ cho "${product.name}"`,
-              );
-            }
-            sizeName = size.sizeName;
-            unitPrice += size.price;
-          } else if (requestedItem.sizeId) {
-            throw new UnprocessableEntityException(
-              `Sản phẩm "${product.name}" không có lựa chọn kích thước`,
-            );
-          }
-
-          const supportedToppings = new Map(
-            options.toppings.map((topping) => [topping.id, topping]),
-          );
-          const toppingSnapshots: ToppingSnapshot[] = [];
-          for (const toppingId of [...(requestedItem.toppingIds ?? [])].sort()) {
-            const supported = supportedToppings.get(toppingId);
-            if (!supported) {
-              throw new UnprocessableEntityException(
-                `Topping không hợp lệ cho "${product.name}"`,
-              );
-            }
-            const topping = await toppingRepo
-              .createQueryBuilder('topping')
-              .setLock('pessimistic_write')
-              .where('topping.id = :id', { id: toppingId })
-              .getOne();
-            if (!topping || topping.stockQuantity < requestedItem.quantity) {
-              throw new ConflictException(
-                `Topping "${supported.name}" không đủ tồn kho`,
-              );
-            }
-            topping.stockQuantity -= requestedItem.quantity;
-            await toppingRepo.save(topping);
-            unitPrice += topping.price;
-            toppingSnapshots.push({
-              id: topping.id,
-              name: topping.name,
-              price: topping.price,
-            });
-          }
-
-          product.stockQuantity -= requestedItem.quantity;
-          await productRepo.save(product);
-          const subtotal = unitPrice * requestedItem.quantity;
-          totalAmount += subtotal;
-          itemSnapshots.push({
-            productId: product.id,
-            productName: product.name,
-            sizeId: requestedItem.sizeId ?? null,
-            sizeName,
-            toppingsSnapshot: toppingSnapshots,
-            quantity: requestedItem.quantity,
-            unitPrice,
-            subtotal,
-          });
-        }
-
-        const order = orders.create({
-          orderCode: `BL-${randomUUID().slice(0, 8).toUpperCase()}`,
-          userId,
-          status: OrderStatus.PENDING,
-          totalAmount,
-          idempotencyKey,
-          requestFingerprint: fingerprint,
-        });
-        await orders.save(order);
-        const items = itemSnapshots.map((item) =>
-          itemRepo.create({ ...item, orderId: order.id }),
-        );
-        await itemRepo.save(items);
-        order.items = items;
-        return this.toPublicOrder(order);
-      });
-    } catch (error) {
-      if (this.isUniqueViolation(error)) {
-        const existing = await this.ordersRepository.findOne({
-          where: { userId, idempotencyKey },
-          relations: { items: true },
-        });
-        if (existing?.requestFingerprint === fingerprint) {
-          return this.toPublicOrder(existing);
-        }
-        if (existing) {
-          throw new ConflictException(
-            'Idempotency-Key đã được dùng với giỏ hàng khác',
-          );
-        }
+        throw error;
       }
-      throw error;
     }
   }
 
@@ -281,14 +305,21 @@ export class OrdersService {
     }
   }
 
-  private async restoreInventory(
-    manager: EntityManager,
-    items: OrderItem[],
-  ) {
+  private async restoreInventory(manager: EntityManager, items: OrderItem[]) {
     for (const item of items) {
-      await manager.increment(Product, { id: item.productId }, 'stockQuantity', item.quantity);
+      await manager.increment(
+        Product,
+        { id: item.productId },
+        'stockQuantity',
+        item.quantity,
+      );
       for (const topping of item.toppingsSnapshot) {
-        await manager.increment(Topping, { id: topping.id }, 'stockQuantity', item.quantity);
+        await manager.increment(
+          Topping,
+          { id: topping.id },
+          'stockQuantity',
+          item.quantity,
+        );
       }
     }
   }
@@ -313,6 +344,14 @@ export class OrdersService {
       error instanceof QueryFailedError &&
       'code' in error.driverError &&
       error.driverError.code === '23505'
+    );
+  }
+
+  private isRetryableTransactionError(error: unknown) {
+    return (
+      error instanceof QueryFailedError &&
+      'code' in error.driverError &&
+      (error.driverError.code === '40001' || error.driverError.code === '40P01')
     );
   }
 

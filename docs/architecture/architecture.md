@@ -65,7 +65,7 @@ flowchart LR
 | Mobile-first | CSS thiết kế cho viewport 360×800 và 390×844 trước, mở rộng lên màn lớn; không cuộn ngang; input có nhãn; thao tác được bằng bàn phím | NFR-05 |
 | Màn hình | Menu, chi tiết sản phẩm (size/topping), giỏ hàng, đăng ký/đăng nhập, xác nhận đơn, thanh toán, lịch sử đơn, trang nhân viên/quản lý xử lý đơn | FR-01…04, 07, 09, 11…13 |
 | Trạng thái giao diện | Mọi màn hình gọi API đều có loading, rỗng, lỗi kèm nút thử lại | FR-01, FR-14 |
-| Quản lý giỏ hàng | Giữ **phía client** (state + `localStorage`); chỉ gửi API khi đặt đơn. API tính lại giá và kiểm tra tồn kho, không tin giá từ client | FR-03, 04, 07 |
+| Quản lý giỏ hàng | Giữ **phía client** (state + `localStorage`), phân vùng theo subject của JWT; đăng xuất chuyển sang giỏ khách rỗng và đăng nhập lại cùng tài khoản khôi phục giỏ. Chỉ gửi API khi đặt đơn; API tính lại giá và kiểm tra tồn kho, không tin giá từ client | FR-03, 04, 07 |
 | Gọi API | Một lớp API client dùng `NEXT_PUBLIC_API_URL`; gắn `Authorization: Bearer <JWT>`; sinh `Idempotency-Key` cho đặt đơn và thanh toán; hiển thị lỗi theo mã HTTP (401, 400, 409, 429) | FR-06, FR-10, NFR-03 |
 | Phân quyền giao diện | Route cho khách cần đăng nhập; trang nhân viên ẩn với khách. Đây chỉ là tiện ích giao diện, quyền thật do API kiểm tra | FR-13 |
 | Validate | Validate ở form để báo lỗi sớm; backend vẫn validate lại | FR-14 |
