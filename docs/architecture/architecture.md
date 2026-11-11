@@ -39,16 +39,16 @@ flowchart LR
         BROWSER["COMP-BROWSER<br/>Trình duyệt / PWA"]
     end
 
-    subgraph PROD["Môi trường Local Docker Compose"]
-        WEB["COMP-WEB<br/>Next.js (mobile-first/PWA)<br/>cổng 3000"]
-        API["COMP-API<br/>NestJS REST API<br/>cổng 3001<br/>(chứa module Mock Payment)"]
-        DB[("COMP-DB<br/>PostgreSQL 16<br/>cổng 5432, volume bền vững")]
+    subgraph PROD["Production trên Render (cloud)"]
+        WEB["COMP-WEB<br/>Next.js (mobile-first/PWA)<br/>Render Web Service<br/>HTTPS 443, PORT do Render cấp"]
+        API["COMP-API<br/>NestJS REST API<br/>Render Web Service<br/>HTTPS 443, PORT do Render cấp<br/>(chứa module Mock Payment)"]
+        DB[("COMP-DB<br/>Render PostgreSQL<br/>cổng 5432, mạng riêng,<br/>persistent storage")]
     end
 
     BROWSER -->|"HTTPS: tải trang, tài nguyên PWA"| WEB
     BROWSER -->|"HTTPS + JWT: REST/JSON"| API
     WEB -.->|"Gọi API từ phía server (SSR), nếu dùng"| API
-    API -->|"TCP 5432, mạng nội bộ,<br/>không public"| DB
+    API -->|"TCP 5432, Internal Database URL,<br/>không public"| DB
 ```
 
 | Container | Vai trò |
@@ -78,15 +78,15 @@ flowchart LR
 | Mã | Thành phần | Công nghệ | Thư mục mã nguồn | Chạy ở đâu | Cổng / giao thức | Phụ thuộc | Yêu cầu liên quan |
 |---|---|---|---|---|---|---|---|
 | COMP-BROWSER | Trình duyệt / PWA của người dùng | Chrome, Firefox, Service Worker (mở rộng) | — (do `apps/web` tạo ra) | Thiết bị người dùng | HTTPS 443 ra ngoài | COMP-WEB, COMP-API | NFR-05, NFR-10 |
-| COMP-WEB | Frontend | Next.js, React, TypeScript | `apps/web/` | Dịch vụ web/container Next.js (kèm CDN của nền tảng) | 3000 trong container; HTTPS 443 ngoài | COMP-API | FR-01…04, FR-11, FR-12, NFR-05 |
-| COMP-API | Backend | NestJS, TypeScript | `apps/api/` | Container NestJS | 3001 trong container; HTTPS 443 ngoài | COMP-DB | FR-02…14, NFR-01, 03, 04, 08 |
+| COMP-WEB | Frontend | Next.js, React, TypeScript | `apps/web/` | **Render Web Service** chạy image Docker (HTTPS do edge của Render kết thúc; không có CDN riêng) | Trong container: `PORT` do Render cấp (local: 3000); ra ngoài HTTPS 443 | COMP-API | FR-01…04, FR-11, FR-12, NFR-05 |
+| COMP-API | Backend | NestJS, TypeScript | `apps/api/` | **Render Web Service** chạy image Docker, Health Check Path `/health` | Trong container: `PORT` do Render cấp (local: 3001); ra ngoài HTTPS 443 | COMP-DB | FR-02…14, NFR-01, 03, 04, 08 |
 | COMP-PAY | Mock Payment (module trong API) | NestJS module + interface `PaymentGateway` | `apps/api/src/payments/gateway/` | **Cùng tiến trình với COMP-API**, không có container riêng (ADR-004) | Gọi hàm nội bộ | — | FR-09, FR-10, BR-04 |
-| COMP-DB | Cơ sở dữ liệu | PostgreSQL 16 | `apps/api/migrations/`, `apps/api/seed/` | Dịch vụ Postgres do nền tảng quản lý hoặc container có persistent volume | 5432, **chỉ mạng nội bộ** | — | NFR-04, NFR-06 |
+| COMP-DB | Cơ sở dữ liệu | PostgreSQL 16 | `apps/api/migrations/`, `apps/api/seed/` | **Render PostgreSQL** (managed, có persistent storage) | 5432, **chỉ mạng riêng của Render** (Internal Database URL), không mở truy cập ngoài | — | NFR-04, NFR-06 |
 | COMP-REG | Container registry | GitHub Container Registry (GHCR), đề xuất | — | Dịch vụ ngoài | HTTPS 443 | — | NFR-09 |
 | COMP-CI | CI | GitHub Actions | `.github/workflows/ci.yml` | GitHub runner | HTTPS | — | NFR-07 |
-| COMP-CD | CD | GitHub Actions | `.github/workflows/cd.yml` | GitHub runner | HTTPS | COMP-REG, nền tảng triển khai | NFR-09 |
-| COMP-PLATFORM | Nền tảng triển khai | **Local Docker Compose** (ADR-006) | `docker-compose.yml`, `docs/deployment.md` | Môi trường local (máy) của nhóm, chạy 3 container web, api, db | web 3000, api 3001 publish ra máy chủ; db 5432 **không publish** | COMP-REG | NFR-02, NFR-04, NFR-06 |
-| COMP-LOCAL | Môi trường local | Docker Compose | `docker-compose.yml` | Máy lập trình viên | web 3000, api 3001, db 5432 | — | NFR-06 |
+| COMP-CD | CD | GitHub Actions | `.github/workflows/cd.yml` | GitHub runner | HTTPS | COMP-REG, COMP-PLATFORM (gọi Render deploy hook/API) | NFR-09 |
+| COMP-PLATFORM | Nền tảng triển khai production | **Render** (ADR-006) | `docs/deployment.md` | Cloud (dịch vụ ngoài) chứa COMP-WEB, COMP-API, COMP-DB | HTTPS 443 | COMP-REG | NFR-02, NFR-04, NFR-06 |
+| COMP-LOCAL | Môi trường local | Docker Compose | `docker-compose.yml` | Máy lập trình viên; chạy web, api, db + volume | web 3000, api 3001, db 5432 | — | NFR-06 |
 
 ## 5. C4 mức 3 – Component của COMP-API (kiến trúc phân lớp)
 
@@ -175,14 +175,14 @@ flowchart TB
 |---|---|---|
 | **Logging** | Log JSON ra stdout (`nestjs-pino` hoặc tương đương), gồm thời gian, mức, `requestId` (header `x-request-id`, sinh nếu thiếu), `orderCode`/`transactionId` ở sự kiện đơn/thanh toán. Che trường nhạy cảm (`password`, `authorization`, thông tin thẻ). Nền tảng thu log từ stdout. | NFR-08, NFR-04 |
 | **Health check** | `GET /health` thực hiện `SELECT 1`; trả **200** khi API và DB sẵn sàng, **503** khi mất DB; không trả secret hay chuỗi kết nối. Dùng cho health check của nền tảng và smoke test của CD. | NFR-02, NFR-09 |
-| **Cấu hình** | 12-factor: toàn bộ cấu hình qua **biến môi trường**, đọc bằng `ConfigModule` và validate khi khởi động (thiếu biến thì không chạy). `.env.example` chỉ chứa placeholder. Secret production lưu ở secret store của nền tảng và GitHub Secrets. | NFR-04, NFR-06 |
+| **Cấu hình** | 12-factor: toàn bộ cấu hình qua **biến môi trường**, đọc bằng `ConfigModule` và validate khi khởi động (thiếu biến thì không chạy). `.env.example` chỉ chứa placeholder. Secret production lưu ở Environment Variables của Render và GitHub Secrets. | NFR-04, NFR-06 |
 
 Biến môi trường dự kiến:
 
 | Biến | Dùng ở | Là secret? | Ghi chú |
 |---|---|---|---|
 | `NODE_ENV` | web, api | Không | `development` / `production` |
-| `PORT` | api | Không | Mặc định 3001 |
+| `PORT` | web, api | Không | Local: 3000/3001. Trên Render do nền tảng cấp, ứng dụng phải đọc từ biến này |
 | `DATABASE_URL` | api | **Có** | Chuỗi kết nối Postgres |
 | `JWT_SECRET` | api | **Có** | Ký JWT |
 | `JWT_EXPIRES_IN` | api | Không | `60m` (NFR-03) |
@@ -190,11 +190,11 @@ Biến môi trường dự kiến:
 | `LOG_LEVEL` | api | Không | `info` |
 | `PAYMENT_MOCK_SCENARIO` | api | Không | Kịch bản mô phỏng |
 | `NEXT_PUBLIC_API_URL` | web | Không | URL API (lộ ra trình duyệt, không đặt secret) |
-| `POSTGRES_USER/PASSWORD/DB` | local compose | Có (local) | Chỉ dùng cho Docker Compose |
+| `POSTGRES_USER/PASSWORD/DB` | local compose | Có (local) | Chỉ dùng cho Docker Compose; production dùng `DATABASE_URL` của Render |
 
 ## 9. Bảo mật
 
-- HTTPS: đề bài yêu cầu truy cập production qua HTTPS. Với Docker Compose, TLS cần reverse proxy hoặc tunnel đặt trước `web`/`api`; **chưa chọn**, xem ADR-006 và mục 13.
+- HTTPS ở production: Render cấp chứng chỉ và kết thúc TLS cho `web` và `api`. Frontend gọi API qua HTTPS và API cho phép đúng origin của frontend (`CORS_ORIGIN`).
 - JWT ngắn hạn (tối đa 60 phút), mật khẩu băm bcrypt, `RolesGuard` cho CUSTOMER / STAFF / MANAGER.
 - `ValidationPipe` với whitelist, từ chối trường lạ (ví dụ `role` khi đăng ký).
 - `Throttler`: 5 lần đăng nhập sai / 60 giây / cặp email-IP → HTTP 429.
@@ -208,8 +208,8 @@ Biến môi trường dự kiến:
 |---|---|---|
 | **Local** (COMP-LOCAL) | `docker-compose.yml`: web, api, db + volume | Phát triển, kiểm thử, người ngoài nhóm chạy theo README |
 | **CI** (COMP-CI) | GitHub Actions: install → lint → unit test → build; integration test có Postgres service container | Chặn merge khi lỗi (NFR-07) |
-| **Registry / CD** (COMP-REG, COMP-CD) | Build image, gắn tag commit SHA hoặc semver, push, deploy, migration, smoke test | Phát hành (NFR-09) |
-| **Vận hành cốt lõi** (COMP-PLATFORM = Local Docker Compose) | COMP-WEB, COMP-API, COMP-DB, file `.env`, log, health check | Phục vụ demo/nghiệm thu; truy cập công khai qua HTTPS cần bổ sung (mục 13) |
+| **Registry / CD** (COMP-REG, COMP-CD) | Build image, gắn tag commit SHA hoặc semver, push GHCR, gọi Render deploy, migration, smoke test | Phát hành (NFR-09) |
+| **Production** (COMP-PLATFORM = Render) | COMP-WEB, COMP-API (Web Service), COMP-DB (Render PostgreSQL), Environment Variables/secret, log, health check `/health` | URL frontend và API công khai qua HTTPS; DB chỉ mạng riêng |
 
 ## 11. Lý do chọn kiến trúc, ưu điểm, hạn chế, trade-off
 
@@ -244,7 +244,7 @@ Các phương án đã cân nhắc và không chọn (vi dịch vụ, Next.js fu
 
 | # | Nội dung | Giá trị đang đề xuất | Người chốt |
 |---|---|---|---|
-| 1 | Nền tảng triển khai (ADR-006) | **Đã chốt: Local Docker Compose.** Còn mở: cách có HTTPS công khai (reverse proxy trên VPS hoặc tunnel) để đáp ứng URL production của đề bài | Cả nhóm |
+| 1 | Nền tảng triển khai (ADR-006) | **Đã chốt: Render** (theo chỉ đạo giảng viên). Còn mở: gói miễn phí hay trả phí (cold start, DB hết hạn sau 30 ngày), thời điểm tạo DB | Cả nhóm |
 | 2 | ORM và công cụ migration (ADR-003) | TypeORM migrations | Backend |
 | 3 | Container registry (ADR-006) | GHCR | DevOps |
-| 4 | Frontend chạy dạng nào | Container Node (SSR) trong Compose (đã khớp nền tảng) | Frontend + DevOps |
+| 4 | Frontend chạy dạng nào | Render Web Service chạy container Node (SSR), đã khớp nền tảng | Frontend + DevOps |

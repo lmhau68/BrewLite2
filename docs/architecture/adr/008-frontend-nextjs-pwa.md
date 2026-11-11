@@ -29,9 +29,9 @@ Khách đặt đồ uống chủ yếu trên điện thoại (NFR-05). Next.js b
 | Phương án | Lý do loại |
 |---|---|
 | Giỏ hàng lưu ở server | Thêm bảng, endpoint và đồng bộ; không cần cho MVP |
-| Xuất tĩnh (`next export`) lên CDN thuần | Mất SSR; vẫn khả thi nếu nhóm chọn nền tảng tĩnh, ghi ở mục 13 `architecture.md` |
+| Xuất tĩnh (`next export`) lên Static Site của Render | Mất SSR; chọn Web Service để cùng cách đóng gói Docker với API (ADR-006) |
 | Native app | Ngoài phạm vi (OS-03) |
 
 ## Hệ quả cho Task 3.2
-COMP-WEB là một container Node riêng, nằm sau CDN/HTTPS của nền tảng, gọi COMP-API qua HTTPS.
+COMP-WEB là một Render Web Service chạy container Node riêng, HTTPS do Render kết thúc, gọi COMP-API qua HTTPS.
 Yêu cầu: FR-01…04, NFR-05, NFR-10.
