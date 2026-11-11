@@ -13,6 +13,8 @@ out/
 # Test / coverage
 coverage/
 .nyc_output/
+test-results/
+playwright-report/
 
 # Environment — không commit secret (NFR-04)
 .env
