@@ -1,0 +1,311 @@
+name: CD
+
+# Continue only after the existing CI workflow finishes on main.
+# This workflow_run event keeps pull requests from publishing or deploying.
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: Continue only after CI passes
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
+    steps:
+      - name: Require successful upstream CI
+        env:
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CI_RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          if [ "$CI_CONCLUSION" != 'success' ]; then
+            echo "::error::CI did not pass. See $CI_RUN_URL"
+            exit 1
+          fi
+          echo "CI passed; continuing with release."
+
+  production-config:
+    name: Check release configuration
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    steps:
+      - name: Require Render settings before publishing
+        env:
+          RENDER_API_URL: ${{ vars.RENDER_API_URL }}
+          RENDER_WEB_URL: ${{ vars.RENDER_WEB_URL }}
+          RENDER_API_SERVICE_ID: ${{ vars.RENDER_API_SERVICE_ID }}
+          RENDER_WEB_SERVICE_ID: ${{ vars.RENDER_WEB_SERVICE_ID }}
+          RENDER_API_DEPLOY_HOOK_URL: ${{ secrets.RENDER_API_DEPLOY_HOOK_URL }}
+          RENDER_WEB_DEPLOY_HOOK_URL: ${{ secrets.RENDER_WEB_DEPLOY_HOOK_URL }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -eu
+          for name in \
+            RENDER_API_URL RENDER_WEB_URL \
+            RENDER_API_SERVICE_ID RENDER_WEB_SERVICE_ID \
+            RENDER_API_DEPLOY_HOOK_URL RENDER_WEB_DEPLOY_HOOK_URL RENDER_API_KEY
+          do
+            if [ -z "$(printenv "$name")" ]; then
+              echo "::error::Missing GitHub Actions variable or secret: $name"
+              exit 1
+            fi
+          done
+
+  publish-images:
+    name: Build and publish Docker images
+    runs-on: ubuntu-latest
+    needs: [quality-gate, production-config]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/api
+          push: true
+          tags: |
+            ghcr.io/lmhau68/brewlite2-api:sha-${{ github.event.workflow_run.head_sha }}
+            ghcr.io/lmhau68/brewlite2-api:latest
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/web
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.RENDER_API_URL }}
+          tags: |
+            ghcr.io/lmhau68/brewlite2-web:sha-${{ github.event.workflow_run.head_sha }}
+            ghcr.io/lmhau68/brewlite2-web:latest
+
+  deploy:
+    name: Deploy and smoke test Render
+    runs-on: ubuntu-latest
+    needs: publish-images
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      api_deploy_id: ${{ steps.trigger.outputs.api_deploy_id }}
+      web_deploy_id: ${{ steps.trigger.outputs.web_deploy_id }}
+      previous_api_deploy_id: ${{ steps.previous.outputs.api_deploy_id }}
+      previous_web_deploy_id: ${{ steps.previous.outputs.web_deploy_id }}
+    steps:
+      - name: Read previous successful deployments
+        id: previous
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          API_SERVICE_ID: ${{ vars.RENDER_API_SERVICE_ID }}
+          WEB_SERVICE_ID: ${{ vars.RENDER_WEB_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          get_live_deploy_id() {
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H 'Accept: application/json' \
+              "https://api.render.com/v1/services/$1/deploys?limit=20" \
+              | jq -r '[.[] | .deploy | select(.status == "live")][0].id // ""'
+          }
+          api_deploy_id=$(get_live_deploy_id "$API_SERVICE_ID")
+          web_deploy_id=$(get_live_deploy_id "$WEB_SERVICE_ID")
+          echo "api_deploy_id=$api_deploy_id" >> "$GITHUB_OUTPUT"
+          echo "web_deploy_id=$web_deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger Render deploy hooks with this commit's images
+        id: trigger
+        env:
+          API_DEPLOY_HOOK_URL: ${{ secrets.RENDER_API_DEPLOY_HOOK_URL }}
+          WEB_DEPLOY_HOOK_URL: ${{ secrets.RENDER_WEB_DEPLOY_HOOK_URL }}
+          API_IMAGE: ghcr.io/lmhau68/brewlite2-api:sha-${{ github.event.workflow_run.head_sha }}
+          WEB_IMAGE: ghcr.io/lmhau68/brewlite2-web:sha-${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          trigger_hook() {
+            hook_url="$1"
+            image_url="$2"
+            image_query=$(jq -nr --arg image "$image_url" '$image | @uri')
+            separator='&'
+            case "$hook_url" in *\?*) ;; *) separator='?' ;; esac
+            response_file=$(mktemp)
+            status=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+              "${hook_url}${separator}imgURL=${image_query}")
+            if [ "$status" != '200' ]; then
+              echo "::error::Render deploy hook returned HTTP $status."
+              cat "$response_file"
+              rm -f "$response_file"
+              return 1
+            fi
+            deploy_id=$(jq -r '.deploy.id // empty' "$response_file")
+            rm -f "$response_file"
+            if [ -z "$deploy_id" ]; then
+              echo '::error::Render did not return a deploy ID; refusing to claim deployment success.'
+              return 1
+            fi
+            printf '%s' "$deploy_id"
+          }
+          api_deploy_id=$(trigger_hook "$API_DEPLOY_HOOK_URL" "$API_IMAGE")
+          echo "api_deploy_id=$api_deploy_id" >> "$GITHUB_OUTPUT"
+          web_deploy_id=$(trigger_hook "$WEB_DEPLOY_HOOK_URL" "$WEB_IMAGE")
+          echo "web_deploy_id=$web_deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for Render startup migrations and deployment
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          API_SERVICE_ID: ${{ vars.RENDER_API_SERVICE_ID }}
+          WEB_SERVICE_ID: ${{ vars.RENDER_WEB_SERVICE_ID }}
+          API_DEPLOY_ID: ${{ steps.trigger.outputs.api_deploy_id }}
+          WEB_DEPLOY_ID: ${{ steps.trigger.outputs.web_deploy_id }}
+        run: |
+          set -euo pipefail
+          wait_for_deploy() {
+            service_id="$1"
+            deploy_id="$2"
+            service_name="$3"
+            for attempt in $(seq 1 60); do
+              status=$(curl --fail --silent --show-error \
+                -H "Authorization: Bearer $RENDER_API_KEY" \
+                -H 'Accept: application/json' \
+                "https://api.render.com/v1/services/$service_id/deploys/$deploy_id" \
+                | jq -r '.status')
+              echo "$service_name deploy status: $status (check $attempt/60)"
+              case "$status" in
+                live) return 0 ;;
+                build_failed|update_failed|pre_deploy_failed|canceled)
+                  echo "::error::$service_name deployment failed with status $status."
+                  return 1
+                  ;;
+              esac
+              sleep 15
+            done
+            echo "::error::Timed out waiting for $service_name deployment."
+            return 1
+          }
+          wait_for_deploy "$API_SERVICE_ID" "$API_DEPLOY_ID" API
+          wait_for_deploy "$WEB_SERVICE_ID" "$WEB_DEPLOY_ID" Web
+
+      - name: Smoke test production API and web app
+        env:
+          API_URL: ${{ vars.RENDER_API_URL }}
+          WEB_URL: ${{ vars.RENDER_WEB_URL }}
+        run: |
+          set -euo pipefail
+          check_url() {
+            url="$1"
+            name="$2"
+            for attempt in $(seq 1 20); do
+              status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+                --max-time 15 "$url" || true)
+              case "$status" in
+                200)
+                  echo "$name smoke test passed (HTTP $status)."
+                  return 0
+                  ;;
+              esac
+              echo "$name not ready (HTTP ${status:-no response}); retry $attempt/20."
+              sleep 15
+            done
+            echo "::error::$name smoke test failed after 20 attempts."
+            return 1
+          }
+          check_url "${API_URL%/}/health" API
+          check_url "${WEB_URL%/}/" Web
+
+      - name: Roll back services if deployment or smoke test failed
+        if: failure()
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          API_SERVICE_ID: ${{ vars.RENDER_API_SERVICE_ID }}
+          WEB_SERVICE_ID: ${{ vars.RENDER_WEB_SERVICE_ID }}
+          API_DEPLOY_ID: ${{ steps.trigger.outputs.api_deploy_id }}
+          WEB_DEPLOY_ID: ${{ steps.trigger.outputs.web_deploy_id }}
+          PREVIOUS_API_DEPLOY_ID: ${{ steps.previous.outputs.api_deploy_id }}
+          PREVIOUS_WEB_DEPLOY_ID: ${{ steps.previous.outputs.web_deploy_id }}
+        run: |
+          set -euo pipefail
+          rollback_if_promoted() {
+            service_id="$1"
+            deploy_id="$2"
+            previous_id="$3"
+            name="$4"
+            if [ -z "$deploy_id" ] || [ -z "$previous_id" ]; then
+              echo "$name: no prior deployment is available for automatic rollback; use Render Dashboard > Deploys."
+              return 0
+            fi
+            status=$(curl --fail --silent --show-error \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H 'Accept: application/json' \
+              "https://api.render.com/v1/services/$service_id/deploys/$deploy_id" \
+              | jq -r '.status')
+            case "$status" in
+              live) ;;
+              build_failed|update_failed|pre_deploy_failed|canceled)
+                echo "$name: failed deploy was not promoted (status $status); Render keeps the previous healthy version."
+                return 0
+                ;;
+              *)
+                echo "::error::$name deployment is still unresolved (status $status). Check Render Deploys and cancel or roll back this release manually."
+                return 1
+                ;;
+            esac
+            body=$(jq -nc --arg deployId "$previous_id" '{deployId: $deployId}')
+            rollback_id=$(curl --fail --silent --show-error --request POST \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H 'Accept: application/json' \
+              -H 'Content-Type: application/json' \
+              --data "$body" \
+              "https://api.render.com/v1/services/$service_id/rollback" \
+              | jq -r '.id // empty')
+            if [ -z "$rollback_id" ]; then
+              echo "::error::$name rollback request did not return a deployment ID."
+              return 1
+            fi
+            for attempt in $(seq 1 20); do
+              rollback_status=$(curl --fail --silent --show-error \
+                -H "Authorization: Bearer $RENDER_API_KEY" \
+                -H 'Accept: application/json' \
+                "https://api.render.com/v1/services/$service_id/deploys/$rollback_id" \
+                | jq -r '.status')
+              echo "$name rollback status: $rollback_status (check $attempt/20)"
+              case "$rollback_status" in
+                live) return 0 ;;
+                build_failed|update_failed|pre_deploy_failed|canceled)
+                  echo "::error::$name rollback failed with status $rollback_status."
+                  return 1
+                  ;;
+              esac
+              sleep 15
+            done
+            echo "::error::Timed out waiting for $name rollback."
+            return 1
+          }
+          # Attempt recovery for both services even if one rollback fails.
+          set +e
+          (set -e; rollback_if_promoted "$API_SERVICE_ID" "$API_DEPLOY_ID" "$PREVIOUS_API_DEPLOY_ID" API)
+          api_rollback_status=$?
+          (set -e; rollback_if_promoted "$WEB_SERVICE_ID" "$WEB_DEPLOY_ID" "$PREVIOUS_WEB_DEPLOY_ID" Web)
+          web_rollback_status=$?
+          if [ "$api_rollback_status" -ne 0 ] || [ "$web_rollback_status" -ne 0 ]; then
+            exit 1
+          fi
