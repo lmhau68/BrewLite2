@@ -6,7 +6,7 @@ import { Product } from './entities/product.entity.js';
 import { Topping } from './entities/topping.entity.js';
 import { seedDatabase } from './seed/seed.js';
 
-/** Prepare the database before the API listens on Render Free. */
+/** Chuẩn bị database trước khi API mở cổng nhận request trên Render Free. */
 export async function prepareProductionDatabase(
   dataSource: DataSource,
 ): Promise<void> {
@@ -15,8 +15,8 @@ export async function prepareProductionDatabase(
   let locked = false;
 
   try {
-    // A session lock serializes overlapping starts, including their migrations
-    // and seed transactions, which use other connections from this pool.
+    // Khóa theo phiên kết nối để các lần khởi động không chạy đồng thời.
+    // Khóa bao trùm cả migration và seed dù chúng dùng kết nối khác trong pool.
     await runner.query("SET lock_timeout = '60s'");
     await runner.query('SELECT pg_advisory_lock(hashtext($1))', [
       'brewlite.production.prepare',
@@ -24,17 +24,17 @@ export async function prepareProductionDatabase(
     locked = true;
 
     const applied = await dataSource.runMigrations({ transaction: 'all' });
-    console.log(`[startup] Applied ${applied.length} migration(s).`);
+    console.log(`[startup] Đã áp dụng ${applied.length} migration.`);
 
     const products = await runner.manager.count(Product);
     const toppings = await runner.manager.count(Topping);
     if (products === 0 && toppings === 0) {
       await seedDatabase(dataSource);
-      console.log('[startup] Initialized the empty demo catalog.');
+      console.log('[startup] Đã nạp dữ liệu mẫu cho catalog rỗng.');
     } else {
-      // The general seed command resets stock and replaces size rows. Avoid
-      // running it on an existing catalog during deploys or idle wake-ups.
-      console.log('[startup] Existing catalog preserved; seed skipped.');
+      // Lệnh seed thông thường đặt lại tồn kho và tạo lại các bản ghi size.
+      // Bỏ qua seed khi catalog đã có dữ liệu để giữ nguyên dữ liệu sau restart.
+      console.log('[startup] Giữ nguyên catalog hiện có, bỏ qua seed.');
     }
   } finally {
     try {
@@ -51,7 +51,7 @@ export async function prepareProductionDatabase(
 
 async function main(): Promise<void> {
   if (!process.env['DATABASE_URL']) {
-    throw new Error('DATABASE_URL is required');
+    throw new Error('Cần cấu hình DATABASE_URL');
   }
   const dataSource = buildDataSource(process.env);
   dataSource.setOptions({ extra: { connectionTimeoutMillis: 10000 } });
@@ -68,9 +68,9 @@ if (
   pathToFileURL(process.argv[1]).href === import.meta.url
 ) {
   main().catch(() => {
-    // Connection errors can contain credentials. Keep startup logs generic.
+    // Lỗi kết nối có thể chứa thông tin đăng nhập; không đưa chi tiết vào log.
     console.error(
-      '[startup] Database preparation failed. API startup blocked. Check database connectivity and migrations.',
+      '[startup] Chuẩn bị database thất bại, API chưa được khởi động. Kiểm tra kết nối database và migration.',
     );
     process.exitCode = 1;
   });

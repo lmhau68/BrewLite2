@@ -16,21 +16,21 @@ class FailingStartup1736020000000 implements MigrationInterface {
   name = 'FailingStartup1736020000000';
   async up(runner: QueryRunner): Promise<void> {
     await runner.query('UPDATE "products" SET "stock_quantity" = 999');
-    throw new Error('Simulated migration failure');
+    throw new Error('Lỗi migration mô phỏng');
   }
   down(): Promise<void> {
     return Promise.resolve();
   }
 }
 
-describe.skipIf(!databaseUrl)('Render Free database preparation', () => {
+describe.skipIf(!databaseUrl)('Chuẩn bị database trên Render Free', () => {
   let admin: DataSource;
   let first: DataSource;
   let second: DataSource;
   let failing: DataSource;
 
   beforeAll(async () => {
-    if (!databaseUrl) throw new Error('TEST_DATABASE_URL is required');
+    if (!databaseUrl) throw new Error('Cần cấu hình TEST_DATABASE_URL');
     vi.stubEnv('SEED_STAFF_EMAIL', '');
     vi.stubEnv('SEED_STAFF_PASSWORD', '');
     admin = new DataSource({ type: 'postgres', url: databaseUrl });
@@ -67,7 +67,7 @@ describe.skipIf(!databaseUrl)('Render Free database preparation', () => {
     vi.unstubAllEnvs();
   });
 
-  it('serializes simultaneous first starts and initializes one catalog', async () => {
+  it('xử lý tuần tự các lần khởi động đồng thời và khởi tạo một catalog', async () => {
     await Promise.all([
       prepareProductionDatabase(first),
       prepareProductionDatabase(second),
@@ -84,7 +84,7 @@ describe.skipIf(!databaseUrl)('Render Free database preparation', () => {
     expect(await first.showMigrations()).toBe(false);
   }, 30000);
 
-  it('preserves stock and size IDs when a service restarts', async () => {
+  it('giữ nguyên tồn kho và mã size khi dịch vụ khởi động lại', async () => {
     const product = await first
       .getRepository(Product)
       .findOneByOrFail({ slug: SEED_PRODUCTS[0].slug });
@@ -114,9 +114,9 @@ describe.skipIf(!databaseUrl)('Render Free database preparation', () => {
     ).toEqual(sizeIds);
   });
 
-  it('rejects a failed migration and releases the startup lock for a retry', async () => {
+  it('dừng khi migration thất bại và giải phóng khóa để có thể thử lại', async () => {
     await expect(prepareProductionDatabase(failing)).rejects.toThrow(
-      'Simulated migration failure',
+      'Lỗi migration mô phỏng',
     );
     await expect(prepareProductionDatabase(second)).resolves.toBeUndefined();
     const product = await first

@@ -1,140 +1,199 @@
-# BrewLite deployment on Render Free (Task 5.3)
+# Hướng dẫn triển khai BrewLite
 
-This guide records the Render and GitHub Actions settings used by
-`.github/workflows/cd.yml`. The workflow continues from the existing `CI`
-workflow after a push to `main` and proceeds only when CI succeeds. Pull
-requests never publish images or deploy. Do not add real credentials to this
-file or to the repository.
+Tài liệu phục vụ Task 5.3, mô tả cấu hình CI/CD và triển khai trên Render Free.
+Workflow `cd.yml` tiếp tục sau khi CI của sự kiện push lên `main` thành công.
+PR chạy các bước kiểm tra, không đẩy image lên registry hoặc triển khai ứng dụng.
+Không đưa mật khẩu, token hoặc URL kết nối database có thông tin đăng nhập vào repo.
 
-## Docker validation before release
+## 1. Luồng CI/CD
 
-The `docker` job in `ci.yml` follows the API and web quality checks. It builds
-both images for Linux AMD64 with `push: false`, loads them into the runner's
-local Docker engine, and starts them against a temporary PostgreSQL 16 service.
-It checks API `/health`, the web page, a nonempty seeded menu, and a second
-database preparation against the existing catalog. The API uses the same
-startup command and dynamic `PORT` setting as Render Free.
+`Push main → CI → Build image → GHCR → Render → Smoke test`
 
-This job also runs on pull requests, using test credentials only. It does not
-log in to GHCR, publish images, or contact Render. A successful `CI` run now
-includes this Docker check, so CD cannot release when the container check fails.
-Someone without Docker on their PC can use this check after the branch is
-pushed for review. The actual container run remains unverified until Actions
-or a compatible local Docker engine executes it.
+- CI kiểm tra lint, unit test, integration test và build API/Web.
+- Job Docker build hai image, chạy thử container và kiểm tra dữ liệu khởi tạo.
+- CD chỉ tiếp tục khi toàn bộ CI thành công.
+- Image được gắn tag commit SHA và `latest`, sau đó đẩy lên GHCR.
+- Deploy hook yêu cầu Render chạy image của đúng commit đã kiểm tra.
+- Pipeline chờ kết quả triển khai trước khi kiểm tra API `/health` và trang Web.
+- Khi có lỗi, pipeline báo thất bại và xử lý rollback theo trạng thái deploy.
 
-## Render services
+## 2. Kiểm tra Docker trong CI
 
-Create a managed PostgreSQL database and two image-backed Web Services for the
-API and web app. Use the private **Internal Database URL** for the API's
-`DATABASE_URL`; do not expose PostgreSQL to the public internet or place this
-URL in GitHub Actions. The images are published to GHCR as
-`ghcr.io/lmhau68/brewlite2-api` and `ghcr.io/lmhau68/brewlite2-web`. If the
-packages are private, configure a GHCR read credential on both Render services.
+Job `docker` trong `ci.yml` chạy sau hai job API và Web trên runner Ubuntu.
+Job build image cho Linux AMD64 với `push: false`, nạp image vào Docker của
+runner và chạy cùng PostgreSQL 16 tạm phục vụ kiểm thử.
 
-Configure the API service:
+Các bước kiểm tra gồm:
+- API `/health` và trang Web trả về HTTP 200.
+- API `/products` trả về danh sách món đã được seed.
+- Chạy lại bước chuẩn bị database với catalog đã có dữ liệu.
+- Sử dụng lệnh khởi động và biến `PORT` tương ứng với Render Free.
 
-| Setting | Value |
+Job dùng thông tin đăng nhập kiểm thử, không đăng nhập GHCR và không gọi Render.
+Kết quả của job là một phần quality gate bắt buộc trước khi CD phát hành image.
+
+## 3. Cấu hình Render
+
+Dùng một Render PostgreSQL và hai Web Service chạy image từ GHCR.
+Đặt cả ba dịch vụ trong cùng workspace và cùng vùng **Singapore** để API kết
+nối database qua mạng riêng. Web gọi API bằng URL HTTPS công khai.
+
+### 3.1. PostgreSQL
+
+| Thiết lập | Giá trị |
 |---|---|
-| Image | `ghcr.io/lmhau68/brewlite2-api:latest` for initial setup |
+| Name | `brewlite-db` |
+| PostgreSQL Version | `16` |
+| Region | Singapore |
+| Compute | Free |
+| Storage | 1 GB |
+| Storage Autoscaling | Disabled |
+| High Availability | Disabled |
+| PostgreSQL Inbound IP Rules | Để trống danh sách để chặn kết nối từ Internet |
+
+Dùng **Internal Database URL** cho biến `DATABASE_URL` của API trên Render.
+Không dùng External Database URL hoặc đưa URL database vào GitHub Actions.
+Giữ nguyên các quy tắc dùng chung của workspace khi chỉnh quy tắc riêng của database.
+
+### 3.2. API
+
+Tạo Web Service bằng **Existing Image**, trỏ đến image API đã có trên GHCR.
+
+| Thiết lập | Giá trị |
+|---|---|
+| Image | `ghcr.io/lmhau68/brewlite2-api:sha-<SHA>` |
+| Region | Singapore |
+| Compute | Free |
 | Health Check Path | `/health` |
-| Pre-Deploy Command | Leave empty (not available on Free) |
+| Pre-Deploy Command | Để trống |
 | Docker Command | `/bin/sh -c "node dist/database/prepare-production.js && exec node dist/main.js"` |
-| `DATABASE_URL` | Render PostgreSQL **Internal Database URL** |
-| `JWT_SECRET` | A unique random secret of at least 32 characters |
-| `CORS_ORIGIN` | The public HTTPS URL of the web service |
-| `DB_MIGRATIONS_RUN` | `false` (the preparation command runs migrations before API startup) |
-| `SEED_STAFF_EMAIL`, `SEED_STAFF_PASSWORD` | Optional pair; set before the first launch if a demo staff account is needed |
 
-The existing API image listens on Render's `PORT` and binds to `0.0.0.0`.
-Override its Docker Command with the value above. The preparation process runs
-transactional migrations before the API opens its HTTP port. An advisory lock
-serializes overlapping starts. Preparation failure exits with a nonzero code,
-so the `&&` prevents the API from starting; Render keeps routing to the previous
-healthy deploy when available. Migrations must remain compatible with that
-previous API while it serves traffic.
+Các biến môi trường của API:
 
-When both catalog tables (`products` and `toppings`) are empty, preparation runs
-the existing seed in a transaction. Later deploys, restarts, and idle wake-ups
-skip seeding, preserving inventory and product-size IDs. Set the optional staff
-seed credentials before the first launch. Free services do not provide Shell
-access, so there is no manual Shell step in this setup.
-
-Configure the web service:
-
-| Setting | Value |
+| Biến | Giá trị |
 |---|---|
-| Image | `ghcr.io/lmhau68/brewlite2-web:latest` for initial setup |
+| `DATABASE_URL` | Internal Database URL của Render PostgreSQL |
+| `JWT_SECRET` | Chuỗi ngẫu nhiên riêng tư, tối thiểu 32 ký tự |
+| `CORS_ORIGIN` | URL HTTPS của Web; cập nhật sau khi tạo Web Service |
+| `DB_MIGRATIONS_RUN` | `false` |
+| `DB_LOGGING` | `false` |
+| `MOCK_PAYMENT_OUTCOME` | `SUCCESS`, `FAILED` hoặc `TIMEOUT` theo kịch bản demo |
+| `SEED_STAFF_EMAIL` | Email nhân viên demo nếu cần tạo tài khoản ban đầu |
+| `SEED_STAFF_PASSWORD` | Mật khẩu nhân viên demo, cấu hình cùng email trước lần khởi động đầu |
+| `SEED_STAFF_NAME` | Tên nhân viên demo nếu cần |
+
+API đọc `PORT` do Render cấp và lắng nghe trên `0.0.0.0`.
+Lệnh chuẩn bị database chạy trước khi API mở cổng nhận request:
+1. Giữ advisory lock để các lần khởi động không chạy migration/seed đồng thời.
+2. Chạy migration trong transaction.
+3. Chỉ seed khi cả hai bảng `products` và `toppings` đều rỗng.
+4. Bỏ qua seed khi catalog đã có dữ liệu, giữ nguyên tồn kho và mã size.
+5. Giải phóng khóa rồi kết thúc; API chỉ khởi động khi lệnh trả về thành công.
+
+Khi chuẩn bị database thất bại, mã thoát khác 0 khiến toán tử `&&` chặn bước
+khởi động API. Render giữ phiên bản đang hoạt động khi bản mới không vượt qua
+health check. Migration phải tương thích với phiên bản cũ còn nhận traffic.
+
+Render Free không có pre-deploy command và Shell. Vì vậy, phương án này dùng
+Docker Command để chuẩn bị database, không yêu cầu chạy seed thủ công qua Shell.
+
+### 3.3. Web
+
+| Thiết lập | Giá trị |
+|---|---|
+| Image | `ghcr.io/lmhau68/brewlite2-web:sha-<SHA>` |
+| Region | Singapore |
+| Compute | Free |
 | Health Check Path | `/` |
+| Docker Command | Để trống, dùng lệnh `npm run start` của image |
 
-The web image is built with the public API URL. Set it as the GitHub Actions
-repository variable `RENDER_API_URL` before the first release. Set
-`RENDER_WEB_URL` to the web service's public HTTPS URL. Leave the web Docker
-Command empty so the existing image's `npm run start` command is used.
+`NEXT_PUBLIC_API_URL` được nhúng khi build image Web. Đổi URL API phải build lại
+image; chỉ thêm biến vào môi trường chạy của Render không thay đổi bản Web đã build.
 
-## Initial setup before automatic releases
+## 4. Khởi tạo image lần đầu
 
-Render verifies that a GHCR image exists before creating an image-backed
-service. The CD workflow also requires the Render settings before publishing,
-so the initial images must be bootstrapped once by a team member with Docker:
+Render kiểm tra image tồn tại trước khi tạo dịch vụ từ registry. Trong khi đó,
+CD cần có cấu hình Render trước khi phát hành. Một thành viên có Docker thực
+hiện bước khởi tạo image lần đầu sau khi CI của commit được chọn đã thành công.
 
-1. Build and publish the first API image after this code is approved.
-2. Create the Render database and API service from that image, using the
-   settings above. The API initializes its empty catalog during startup.
-3. Build and publish the first web image with `NEXT_PUBLIC_API_URL` set to the
-   API's public HTTPS URL, then create the web service from that image.
-4. Set the API's `CORS_ORIGIN` to the web URL and configure the GitHub variables
-   and secrets below. Configure GHCR read credentials in Render for private
-   packages. Disable any independent Git-based auto-deploys.
+Từ thư mục gốc repo, đăng nhập GHCR và tạo image API:
 
-These are one-time setup steps. Afterward, every successful CI run for a push
-to `main` publishes and deploys the checked commit automatically.
+```powershell
+$task53Sha = git rev-parse HEAD
+docker login ghcr.io
+docker build --platform linux/amd64 -t "ghcr.io/lmhau68/brewlite2-api:sha-$task53Sha" apps/api
+docker push "ghcr.io/lmhau68/brewlite2-api:sha-$task53Sha"
+```
 
-## GitHub Actions configuration
+Tài khoản đăng nhập phải có quyền đẩy package của nhóm. Không ghi token vào
+file code, tài liệu hoặc lệnh được chia sẻ. Nếu package riêng tư, cấu hình
+registry credential có quyền đọc trên Render.
 
-Add repository **Variables**:
+Sau khi có image API:
+1. Tạo API Web Service theo mục 3.2 và chờ dịch vụ hoạt động.
+2. Ghi nhận URL HTTPS của API.
+3. Build image Web với URL API thực tế, rồi đẩy image lên GHCR:
 
-| Name | Value |
+```powershell
+docker build --platform linux/amd64 --build-arg NEXT_PUBLIC_API_URL="https://<ten-api>.onrender.com" -t "ghcr.io/lmhau68/brewlite2-web:sha-$task53Sha" apps/web
+docker push "ghcr.io/lmhau68/brewlite2-web:sha-$task53Sha"
+```
+
+Thay URL mẫu bằng URL API thực tế, không thêm dấu `/` ở cuối.
+Tạo Web Service theo mục 3.3, rồi cập nhật `CORS_ORIGIN` của API bằng URL Web.
+Cấu hình các biến và secret của GitHub Actions theo mục 5.
+Tắt cơ chế tự triển khai độc lập từ Git để bản phát hành đi qua pipeline CD.
+
+Đây là bước thiết lập ban đầu. Những lần phát hành sau do CI/CD thực hiện
+tự động sau khi code được đưa vào `main` và vượt qua quality gate.
+
+## 5. Biến và secret trong GitHub Actions
+
+Thêm các **Repository Variables**:
+
+| Tên | Giá trị |
 |---|---|
-| `RENDER_API_URL` | Public HTTPS URL of the API, without a trailing slash |
-| `RENDER_WEB_URL` | Public HTTPS URL of the web service, without a trailing slash |
-| `RENDER_API_SERVICE_ID` | Render API service ID (`srv-...`) |
-| `RENDER_WEB_SERVICE_ID` | Render web service ID (`srv-...`) |
+| `RENDER_API_URL` | URL HTTPS của API, không có dấu `/` cuối |
+| `RENDER_WEB_URL` | URL HTTPS của Web, không có dấu `/` cuối |
+| `RENDER_API_SERVICE_ID` | Mã API Web Service trên Render, dạng `srv-...` |
+| `RENDER_WEB_SERVICE_ID` | Mã Web Service trên Render, dạng `srv-...` |
 
-Add repository **Secrets**:
+Thêm các **Repository Secrets**:
 
-| Name | Value |
+| Tên | Giá trị |
 |---|---|
-| `RENDER_API_DEPLOY_HOOK_URL` | API service's Render deploy hook URL |
-| `RENDER_WEB_DEPLOY_HOOK_URL` | Web service's Render deploy hook URL |
-| `RENDER_API_KEY` | Render API key, used to track deployments and trigger rollback |
+| `RENDER_API_DEPLOY_HOOK_URL` | Deploy hook của API |
+| `RENDER_WEB_DEPLOY_HOOK_URL` | Deploy hook của Web |
+| `RENDER_API_KEY` | API key của Render để theo dõi deploy và yêu cầu rollback |
 
-`GITHUB_TOKEN` is provided by Actions and receives `packages: write` only in
-the image publishing job. The workflow uses each service's deploy hook to
-deploy the exact commit SHA image, then uses the Render API key to wait for
-that deployment's state. Do not add production `DATABASE_URL` or `JWT_SECRET`
-to GitHub Actions; they belong only in Render's API environment.
+`GITHUB_TOKEN` do Actions cấp, chỉ nhận quyền `packages: write` trong job
+phát hành image. Không thêm `DATABASE_URL` hoặc `JWT_SECRET` production vào
+GitHub Actions; hai giá trị này thuộc môi trường API trên Render.
 
-## Release and rollback behavior
+Deploy hook dùng image của commit đã kiểm tra. API key dùng để chờ đúng bản
+deploy hoàn tất, tránh nhầm phản hồi từ phiên bản cũ thành kết quả triển khai mới.
 
-The existing CI workflow runs lint, unit tests, API integration tests, and
-application builds. Only after that workflow succeeds does this workflow build
-both Docker images, tag them with the checked commit SHA (and `latest`), push
-them to GHCR, trigger the two Render services, wait for the API migration and
-deployment to finish, and smoke-test `/health` and `/`.
+## 6. Smoke test và rollback
 
-Smoke checks require HTTP 200. Failed migration/startup or post-deploy smoke
-checks leave the workflow failed. Rollback restores application images, not
-database contents; schema changes must support the previous application. A
-destructive migration needs a separate data recovery plan before release.
+Smoke test yêu cầu HTTP 200 từ API `/health` và trang Web.
+Migration, khởi động dịch vụ hoặc smoke test thất bại đều khiến pipeline báo lỗi.
 
-If the new instance fails Render's health check, Render keeps the last healthy
-deployment. If a post-deploy smoke test fails after promotion, the workflow
-attempts to roll both services back to the deployments that were live before
-the release. A failed first deployment has no previous version to restore; in
-that case correct the Render configuration and redeploy. Keep previous GHCR
-images available so Render can retrieve them during rollback.
+Trước khi triển khai, pipeline lưu mã deploy đang hoạt động của API và Web.
+Nếu bản mới đã được đưa vào phục vụ nhưng smoke test thất bại, pipeline yêu cầu
+rollback về các mã deploy đã lưu và chờ kết quả. Nếu bản mới thất bại trước khi
+được đưa vào phục vụ, Render tiếp tục dùng bản đang hoạt động.
 
-Render Free instances can sleep and restart. Free PostgreSQL also expires, so
-create it near the demo date and record its expiration in the handoff. See the
-[Free service limits](https://render.com/docs/free) and
-[Docker command documentation](https://render.com/docs/docker).
+Nếu chưa có phiên bản cũ hoặc trạng thái deploy chưa rõ, kiểm tra từng dịch vụ
+trong **Render Dashboard → Deploys** và xử lý hủy/rollback thủ công.
+Giữ lại các image đã phát hành trong GHCR để Render có thể tải lại khi rollback.
+
+Rollback ứng dụng không tự khôi phục dữ liệu database. Ưu tiên migration tương
+thích ngược; thay đổi phá vỡ tương thích cần có phương án khôi phục dữ liệu trước
+khi phát hành.
+
+## 7. Lưu ý khi nghiệm thu
+
+Render Free có thể ngủ khi không có truy cập và khởi động lại khi nhận request.
+Database Free có thời hạn sử dụng; ghi nhận ngày hết hạn và chuẩn bị dữ liệu
+cho phiên demo. Xem [giới hạn gói Free](https://render.com/docs/free) và
+[hướng dẫn Docker trên Render](https://render.com/docs/docker).

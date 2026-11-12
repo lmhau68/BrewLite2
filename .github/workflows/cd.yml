@@ -1,7 +1,7 @@
 name: CD
 
-# Continue only after the existing CI workflow finishes on main.
-# This workflow_run event keeps pull requests from publishing or deploying.
+# Tiếp tục từ workflow CI sau khi kiểm tra nhánh main hoàn tất.
+# Chỉ phát hành khi CI của sự kiện push lên main thành công; PR không kích hoạt CD.
 on:
   workflow_run:
     workflows: ['CI']
@@ -17,27 +17,27 @@ permissions:
 
 jobs:
   quality-gate:
-    name: Continue only after CI passes
+    name: Kiểm tra kết quả CI
     runs-on: ubuntu-latest
     if: github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
     steps:
-      - name: Require successful upstream CI
+      - name: Xác nhận CI thành công
         env:
           CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           CI_RUN_URL: ${{ github.event.workflow_run.html_url }}
         run: |
           if [ "$CI_CONCLUSION" != 'success' ]; then
-            echo "::error::CI did not pass. See $CI_RUN_URL"
+            echo "::error::CI chưa thành công. Xem $CI_RUN_URL"
             exit 1
           fi
-          echo "CI passed; continuing with release."
+          echo "CI đã thành công; tiếp tục phát hành."
 
   production-config:
-    name: Check release configuration
+    name: Kiểm tra cấu hình phát hành
     runs-on: ubuntu-latest
     needs: quality-gate
     steps:
-      - name: Require Render settings before publishing
+      - name: Xác nhận cấu hình Render
         env:
           RENDER_API_URL: ${{ vars.RENDER_API_URL }}
           RENDER_WEB_URL: ${{ vars.RENDER_WEB_URL }}
@@ -54,13 +54,13 @@ jobs:
             RENDER_API_DEPLOY_HOOK_URL RENDER_WEB_DEPLOY_HOOK_URL RENDER_API_KEY
           do
             if [ -z "$(printenv "$name")" ]; then
-              echo "::error::Missing GitHub Actions variable or secret: $name"
+              echo "::error::Thiếu biến hoặc secret trong GitHub Actions: $name"
               exit 1
             fi
           done
 
   publish-images:
-    name: Build and publish Docker images
+    name: Build và phát hành Docker image
     runs-on: ubuntu-latest
     needs: [quality-gate, production-config]
     permissions:
@@ -73,14 +73,14 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
+      - name: Đăng nhập GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push API image
+      - name: Build và đẩy image API
         uses: docker/build-push-action@v6
         with:
           context: ./apps/api
@@ -89,7 +89,7 @@ jobs:
             ghcr.io/lmhau68/brewlite2-api:sha-${{ github.event.workflow_run.head_sha }}
             ghcr.io/lmhau68/brewlite2-api:latest
 
-      - name: Build and push web image
+      - name: Build và đẩy image Web
         uses: docker/build-push-action@v6
         with:
           context: ./apps/web
@@ -101,7 +101,7 @@ jobs:
             ghcr.io/lmhau68/brewlite2-web:latest
 
   deploy:
-    name: Deploy and smoke test Render
+    name: Triển khai và kiểm tra Render
     runs-on: ubuntu-latest
     needs: publish-images
     timeout-minutes: 45
@@ -113,7 +113,7 @@ jobs:
       previous_api_deploy_id: ${{ steps.previous.outputs.api_deploy_id }}
       previous_web_deploy_id: ${{ steps.previous.outputs.web_deploy_id }}
     steps:
-      - name: Read previous successful deployments
+      - name: Lưu thông tin phiên bản đang hoạt động
         id: previous
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
@@ -133,7 +133,7 @@ jobs:
           echo "api_deploy_id=$api_deploy_id" >> "$GITHUB_OUTPUT"
           echo "web_deploy_id=$web_deploy_id" >> "$GITHUB_OUTPUT"
 
-      - name: Trigger Render deploy hooks with this commit's images
+      - name: Triển khai image của commit đã kiểm tra
         id: trigger
         env:
           API_DEPLOY_HOOK_URL: ${{ secrets.RENDER_API_DEPLOY_HOOK_URL }}
@@ -152,7 +152,7 @@ jobs:
             status=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
               "${hook_url}${separator}imgURL=${image_query}")
             if [ "$status" != '200' ]; then
-              echo "::error::Render deploy hook returned HTTP $status."
+              echo "::error::Deploy hook của Render trả về HTTP $status."
               cat "$response_file"
               rm -f "$response_file"
               return 1
@@ -160,7 +160,7 @@ jobs:
             deploy_id=$(jq -r '.deploy.id // empty' "$response_file")
             rm -f "$response_file"
             if [ -z "$deploy_id" ]; then
-              echo '::error::Render did not return a deploy ID; refusing to claim deployment success.'
+              echo '::error::Render không trả về mã deploy; không thể xác nhận kết quả triển khai.'
               return 1
             fi
             printf '%s' "$deploy_id"
@@ -170,7 +170,7 @@ jobs:
           web_deploy_id=$(trigger_hook "$WEB_DEPLOY_HOOK_URL" "$WEB_IMAGE")
           echo "web_deploy_id=$web_deploy_id" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for Render startup migrations and deployment
+      - name: Chờ migration và khởi động dịch vụ
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           API_SERVICE_ID: ${{ vars.RENDER_API_SERVICE_ID }}
@@ -189,23 +189,23 @@ jobs:
                 -H 'Accept: application/json' \
                 "https://api.render.com/v1/services/$service_id/deploys/$deploy_id" \
                 | jq -r '.status')
-              echo "$service_name deploy status: $status (check $attempt/60)"
+              echo "Trạng thái deploy $service_name: $status, lần kiểm tra $attempt/60"
               case "$status" in
                 live) return 0 ;;
                 build_failed|update_failed|pre_deploy_failed|canceled)
-                  echo "::error::$service_name deployment failed with status $status."
+                  echo "::error::Triển khai $service_name thất bại với trạng thái $status."
                   return 1
                   ;;
               esac
               sleep 15
             done
-            echo "::error::Timed out waiting for $service_name deployment."
+            echo "::error::Hết thời gian chờ triển khai $service_name."
             return 1
           }
           wait_for_deploy "$API_SERVICE_ID" "$API_DEPLOY_ID" API
           wait_for_deploy "$WEB_SERVICE_ID" "$WEB_DEPLOY_ID" Web
 
-      - name: Smoke test production API and web app
+      - name: Kiểm tra API và Web sau triển khai
         env:
           API_URL: ${{ vars.RENDER_API_URL }}
           WEB_URL: ${{ vars.RENDER_WEB_URL }}
@@ -219,20 +219,20 @@ jobs:
                 --max-time 15 "$url" || true)
               case "$status" in
                 200)
-                  echo "$name smoke test passed (HTTP $status)."
+                  echo "Smoke test $name thành công, HTTP $status."
                   return 0
                   ;;
               esac
-              echo "$name not ready (HTTP ${status:-no response}); retry $attempt/20."
+              echo "$name chưa sẵn sàng, HTTP ${status:-không có phản hồi}; thử lại lần $attempt/20."
               sleep 15
             done
-            echo "::error::$name smoke test failed after 20 attempts."
+            echo "::error::Smoke test $name thất bại sau 20 lần kiểm tra."
             return 1
           }
           check_url "${API_URL%/}/health" API
           check_url "${WEB_URL%/}/" Web
 
-      - name: Roll back services if deployment or smoke test failed
+      - name: Rollback khi triển khai hoặc smoke test thất bại
         if: failure()
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
@@ -250,7 +250,7 @@ jobs:
             previous_id="$3"
             name="$4"
             if [ -z "$deploy_id" ] || [ -z "$previous_id" ]; then
-              echo "$name: no prior deployment is available for automatic rollback; use Render Dashboard > Deploys."
+              echo "$name: không đủ thông tin để rollback tự động. Kiểm tra Render Dashboard > Deploys."
               return 0
             fi
             status=$(curl --fail --silent --show-error \
@@ -261,11 +261,11 @@ jobs:
             case "$status" in
               live) ;;
               build_failed|update_failed|pre_deploy_failed|canceled)
-                echo "$name: failed deploy was not promoted (status $status); Render keeps the previous healthy version."
+                echo "$name: bản deploy chưa được đưa vào phục vụ, trạng thái $status; Render giữ phiên bản hoạt động trước đó."
                 return 0
                 ;;
               *)
-                echo "::error::$name deployment is still unresolved (status $status). Check Render Deploys and cancel or roll back this release manually."
+                echo "::error::Chưa xác định được kết quả deploy $name, trạng thái $status. Kiểm tra Render Deploys để hủy hoặc rollback thủ công."
                 return 1
                 ;;
             esac
@@ -278,7 +278,7 @@ jobs:
               "https://api.render.com/v1/services/$service_id/rollback" \
               | jq -r '.id // empty')
             if [ -z "$rollback_id" ]; then
-              echo "::error::$name rollback request did not return a deployment ID."
+              echo "::error::Yêu cầu rollback $name không trả về mã deploy."
               return 1
             fi
             for attempt in $(seq 1 20); do
@@ -287,20 +287,20 @@ jobs:
                 -H 'Accept: application/json' \
                 "https://api.render.com/v1/services/$service_id/deploys/$rollback_id" \
                 | jq -r '.status')
-              echo "$name rollback status: $rollback_status (check $attempt/20)"
+              echo "Trạng thái rollback $name: $rollback_status, lần kiểm tra $attempt/20"
               case "$rollback_status" in
                 live) return 0 ;;
                 build_failed|update_failed|pre_deploy_failed|canceled)
-                  echo "::error::$name rollback failed with status $rollback_status."
+                  echo "::error::Rollback $name thất bại với trạng thái $rollback_status."
                   return 1
                   ;;
               esac
               sleep 15
             done
-            echo "::error::Timed out waiting for $name rollback."
+            echo "::error::Hết thời gian chờ rollback $name."
             return 1
           }
-          # Attempt recovery for both services even if one rollback fails.
+          # Thử khôi phục cả hai dịch vụ ngay cả khi một yêu cầu rollback thất bại.
           set +e
           (set -e; rollback_if_promoted "$API_SERVICE_ID" "$API_DEPLOY_ID" "$PREVIOUS_API_DEPLOY_ID" API)
           api_rollback_status=$?

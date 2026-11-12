@@ -91,7 +91,7 @@ jobs:
           NEXT_TELEMETRY_DISABLED: '1'
 
   docker:
-    name: Docker — Build and startup check (no publishing)
+    name: Docker — Build và kiểm tra khởi động
     runs-on: ubuntu-latest
     needs: [api, web]
     timeout-minutes: 25
@@ -116,7 +116,7 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build API image locally on runner
+      - name: Build image API
         uses: docker/build-push-action@v6
         with:
           context: ./apps/api
@@ -125,7 +125,7 @@ jobs:
           push: false
           tags: brewlite-api:ci
 
-      - name: Build web image locally on runner
+      - name: Build image Web
         uses: docker/build-push-action@v6
         with:
           context: ./apps/web
@@ -136,11 +136,11 @@ jobs:
           build-args: |
             NEXT_PUBLIC_API_URL=http://127.0.0.1:10000
 
-      - name: Start containers with Render Free startup command
+      - name: Khởi động container theo cấu hình Render Free
         run: |
           set -euo pipefail
-          # Host networking connects the containers to this job's temporary
-          # PostgreSQL service on the Linux runner. No production secrets.
+          # Container kết nối PostgreSQL tạm của job qua mạng host trên runner Linux.
+          # Chỉ dùng thông tin đăng nhập kiểm thử, không dùng secret production.
           docker run --detach --name brewlite-api-ci --network host \
             -e DATABASE_URL=postgres://brewlite:brewlite@127.0.0.1:5432/brewlite_docker_test \
             -e JWT_SECRET=brewlite-ci-docker-test-secret-at-least-32-characters \
@@ -152,7 +152,7 @@ jobs:
           docker run --detach --name brewlite-web-ci --network host \
             -e PORT=10001 brewlite-web:ci
 
-      - name: Check container health and initial seed
+      - name: Kiểm tra health và dữ liệu seed
         run: |
           set -euo pipefail
           wait_for_http_200() {
@@ -165,22 +165,22 @@ jobs:
               fi
               sleep 2
             done
-            echo "::error::Container did not return HTTP 200: $url"
+            echo "::error::Container không trả về HTTP 200: $url"
             return 1
           }
           wait_for_http_200 http://127.0.0.1:10000/health
           wait_for_http_200 http://127.0.0.1:10001/
           curl --fail --silent --show-error --max-time 10 \
             http://127.0.0.1:10000/products | jq -e 'type == "array" and length > 0'
-          # A second preparation must succeed with an existing catalog.
+          # Chạy lại bước chuẩn bị để kiểm tra khả năng khởi động với catalog đã có.
           docker exec brewlite-api-ci node dist/database/prepare-production.js
 
-      - name: Show container logs on failure
+      - name: Hiển thị log container khi kiểm tra thất bại
         if: failure()
         run: |
           docker logs brewlite-api-ci || true
           docker logs brewlite-web-ci || true
 
-      - name: Remove test containers
+      - name: Dọn dẹp container kiểm thử
         if: always()
         run: docker rm --force brewlite-api-ci brewlite-web-ci || true
