@@ -233,9 +233,7 @@ export function updateStaffOrder(
 export function submitPayment(
   input: {
     orderId: string;
-    method: 'WALLET' | 'CARD';
-    bankCode?: string;
-    accountNumber?: string;
+    method: 'VNPAY';
   },
   idempotencyKey: string,
 ): Promise<PaymentSummary> {
@@ -251,31 +249,5 @@ export function fetchPayment(paymentId: string): Promise<PaymentSummary> {
   return request<PaymentSummary>(
     `/payments/${encodeURIComponent(paymentId)}`,
     { authenticated: true },
-  );
-}
-
-export function simulateQrPayment(
-  paymentId: string,
-  scanToken: string,
-): Promise<PaymentSummary> {
-  return request<PaymentSummary>(
-    `/payments/${encodeURIComponent(paymentId)}/mock-scan`,
-    { method: 'POST', body: { scanToken } },
-  );
-}
-
-export function cancelQrPayment(paymentId: string): Promise<PaymentSummary> {
-  return request<PaymentSummary>(
-    `/payments/${encodeURIComponent(paymentId)}/mock-cancel`,
-    { method: 'POST', authenticated: true },
-  );
-}
-
-export function simulateCardPaymentResult(
-  paymentId: string,
-): Promise<PaymentSummary> {
-  return request<PaymentSummary>(
-    `/payments/${encodeURIComponent(paymentId)}/mock-result`,
-    { method: 'POST', authenticated: true },
   );
 }

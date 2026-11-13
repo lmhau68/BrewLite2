@@ -87,9 +87,10 @@ export function OrderDetailScreen({ orderId }: { orderId: string }) {
                 {order.payments.map((payment) => (
                   <li key={payment.id}>
                     <span>
-                      {payment.method === 'WALLET' ? 'Ví điện tử' : `Thẻ / ${payment.bankCode ?? 'Ngân hàng'}`}
+                      {payment.method === 'VNPAY'
+                        ? 'VNPay Sandbox'
+                        : 'Phương thức thanh toán cũ'}
                       {' · '}{payment.status}
-                      {payment.maskedAccount ? ` · ${payment.maskedAccount}` : ''}
                     </span>
                     <strong>{formatPrice(payment.amount)}</strong>
                   </li>

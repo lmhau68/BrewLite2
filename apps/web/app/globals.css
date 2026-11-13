@@ -702,39 +702,12 @@ img {
   margin-bottom: var(--space-2);
 }
 
-.payment-tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2);
-}
-
-.payment-tabs__item {
-  min-height: 44px;
-  padding: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-size: 0.875rem;
-}
-
-.payment-tabs__item.is-active {
-  border-color: var(--color-accent);
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-  font-weight: 700;
-}
-
 .qr-panel {
   margin-top: var(--space-4);
   display: grid;
   justify-items: center;
   gap: var(--space-2);
   text-align: center;
-}
-
-.payment-form {
-  margin-top: var(--space-4);
 }
 
 .payment-submit {

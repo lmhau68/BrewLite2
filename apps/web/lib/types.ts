@@ -44,7 +44,7 @@ export type OrderStatus =
   | 'CANCELLED';
 
 export type PaymentStatus = 'SUCCESS' | 'FAILED' | 'PENDING';
-export type PaymentMethod = 'WALLET' | 'CARD';
+export type PaymentMethod = 'WALLET' | 'CARD' | 'VNPAY';
 
 export interface PublicUser {
   id: string;
@@ -79,7 +79,7 @@ export interface PaymentRecord {
   transactionId: string | null;
   bankCode: string | null;
   maskedAccount: string | null;
-  qrScanToken?: string | null;
+  checkoutUrl?: string | null;
   createdAt: string;
 }
 

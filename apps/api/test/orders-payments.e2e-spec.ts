@@ -10,16 +10,12 @@ import { buildDataSourceOptions } from '../src/config/database.config.js';
 import {
   entities,
   Order,
-  Payment,
   Product,
   ProductSize,
   Topping,
 } from '../src/database/entities/index.js';
 import { OrderStatus } from '../src/database/entities/order.entity.js';
-import {
-  PaymentMethod,
-  PaymentStatus,
-} from '../src/database/entities/payment.entity.js';
+import { PaymentMethod } from '../src/database/entities/payment.entity.js';
 import { migrations } from '../src/database/migrations/index.js';
 import { AuthModule } from '../src/modules/auth/auth.module.js';
 import { HealthModule } from '../src/modules/health/health.module.js';
@@ -46,8 +42,6 @@ describe.skipIf(!databaseUrl)(
       if (!databaseUrl) throw new Error('TEST_DATABASE_URL is required');
 
       process.env['JWT_SECRET'] = JWT_TEST_SECRET;
-      process.env['MOCK_PAYMENT_OUTCOME'] = 'SUCCESS';
-
       adminDataSource = new DataSource({ type: 'postgres', url: databaseUrl });
       await adminDataSource.initialize();
       await adminDataSource.query(`CREATE SCHEMA "${schemaName}"`);
@@ -72,7 +66,6 @@ describe.skipIf(!databaseUrl)(
             load: [
               () => ({
                 JWT_SECRET: JWT_TEST_SECRET,
-                MOCK_PAYMENT_OUTCOME: 'SUCCESS',
               }),
             ],
           }),
@@ -170,7 +163,7 @@ describe.skipIf(!databaseUrl)(
       await request(app.getHttpServer())
         .post('/payments')
         .set('Idempotency-Key', randomUUID())
-        .send({ orderId: randomUUID(), method: PaymentMethod.WALLET })
+        .send({ orderId: randomUUID(), method: PaymentMethod.VNPAY })
         .expect(401);
     });
 
@@ -258,8 +251,7 @@ describe.skipIf(!databaseUrl)(
         .expect(409);
     });
 
-    it('processes simulated CARD payment via POST /payments, updates order to PAID in DB, and prevents duplicate payment (FR-09, FR-10)', async () => {
-      // Create a fresh order first
+    it('rejects legacy mock payment methods', async () => {
       const orderRes = await request(app.getHttpServer())
         .post('/orders')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -270,110 +262,14 @@ describe.skipIf(!databaseUrl)(
         .expect(201);
 
       const orderId = (orderRes.body as { id: string }).id;
-      const paymentKey = randomUUID();
-      const paymentPayload = {
-        orderId,
-        method: PaymentMethod.CARD,
-        bankCode: 'VCB',
-        accountNumber: '123456789012',
-      };
-
-      const payRes = await request(app.getHttpServer())
-        .post('/payments')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .set('Idempotency-Key', paymentKey)
-        .send(paymentPayload)
-        .expect(201);
-
-      const paymentBody = payRes.body as {
-        id: string;
-        status: PaymentStatus;
-        orderStatus: OrderStatus;
-        maskedAccount: string;
-        amount: number;
-      };
-
-      expect(paymentBody.status).toBe(PaymentStatus.SUCCESS);
-      expect(paymentBody.orderStatus).toBe(OrderStatus.PAID);
-      expect(paymentBody.maskedAccount).toBe('****9012');
-      expect(paymentBody.amount).toBe(31000);
-
-      // Verify order and payment state in PostgreSQL
-      const dbOrder = await dataSource
-        .getRepository(Order)
-        .findOneByOrFail({ id: orderId });
-      expect(dbOrder.status).toBe(OrderStatus.PAID);
-
-      const dbPayment = await dataSource
-        .getRepository(Payment)
-        .findOneByOrFail({ id: paymentBody.id });
-      expect(dbPayment.status).toBe(PaymentStatus.SUCCESS);
-      expect(dbPayment.accountLast4).toBe('9012');
-
-      // Replay with same payment Idempotency-Key returns same payment
-      const replayPayRes = await request(app.getHttpServer())
-        .post('/payments')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .set('Idempotency-Key', paymentKey)
-        .send(paymentPayload)
-        .expect(201);
-
-      expect((replayPayRes.body as { id: string }).id).toBe(paymentBody.id);
-
-      // New payment attempt with a different key on an already PAID order is rejected (409)
-      await request(app.getHttpServer())
-        .post('/payments')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .set('Idempotency-Key', randomUUID())
-        .send(paymentPayload)
-        .expect(409);
-    });
-
-    it('processes simulated WALLET QR payment and scan confirmation via HTTP (FR-09)', async () => {
-      const orderRes = await request(app.getHttpServer())
-        .post('/orders')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .set('Idempotency-Key', randomUUID())
-        .send({
-          items: [{ productId: product.id, sizeId: sizeM.id, quantity: 1 }],
-        })
-        .expect(201);
-
-      const orderId = (orderRes.body as { id: string }).id;
-
-      const qrRes = await request(app.getHttpServer())
-        .post('/payments')
-        .set('Authorization', `Bearer ${accessToken}`)
-        .set('Idempotency-Key', randomUUID())
-        .send({
-          orderId,
-          method: PaymentMethod.WALLET,
-        })
-        .expect(201);
-
-      const qrPayment = qrRes.body as {
-        id: string;
-        status: PaymentStatus;
-        orderStatus: OrderStatus;
-        qrScanToken: string;
-      };
-
-      expect(qrPayment.status).toBe(PaymentStatus.PENDING);
-      expect(qrPayment.orderStatus).toBe(OrderStatus.PENDING);
-      expect(qrPayment.qrScanToken).toEqual(expect.any(String));
-
-      // Confirm QR scan via POST /payments/:paymentId/mock-scan
-      const scanRes = await request(app.getHttpServer())
-        .post(`/payments/${qrPayment.id}/mock-scan`)
-        .send({ scanToken: qrPayment.qrScanToken })
-        .expect(201);
-
-      const scannedBody = scanRes.body as {
-        status: PaymentStatus;
-        orderStatus: OrderStatus;
-      };
-      expect(scannedBody.status).toBe(PaymentStatus.SUCCESS);
-      expect(scannedBody.orderStatus).toBe(OrderStatus.PAID);
+      for (const method of [PaymentMethod.WALLET, PaymentMethod.CARD]) {
+        await request(app.getHttpServer())
+          .post('/payments')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .set('Idempotency-Key', randomUUID())
+          .send({ orderId, method })
+          .expect(400);
+      }
     });
   },
 );
