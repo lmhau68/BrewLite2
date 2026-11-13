@@ -66,7 +66,7 @@ Tạo Web Service bằng **Existing Image**, trỏ đến image API đã có tr�
 | Compute | Free |
 | Health Check Path | `/health` |
 | Pre-Deploy Command | Để trống |
-| Docker Command | `/bin/sh -c "node dist/database/prepare-production.js && exec node dist/main.js"` |
+| Docker Command | `/bin/sh /app/start-render.sh` |
 
 Các biến môi trường của API:
 
@@ -90,12 +90,15 @@ Lệnh chuẩn bị database chạy trước khi API mở cổng nhận request:
 4. Bỏ qua seed khi catalog đã có dữ liệu, giữ nguyên tồn kho và mã size.
 5. Giải phóng khóa rồi kết thúc; API chỉ khởi động khi lệnh trả về thành công.
 
-Khi chuẩn bị database thất bại, mã thoát khác 0 khiến toán tử `&&` chặn bước
+Script `start-render.sh` dùng `set -eu` để dừng khi chuẩn bị database thất bại, chặn bước
 khởi động API. Render giữ phiên bản đang hoạt động khi bản mới không vượt qua
 health check. Migration phải tương thích với phiên bản cũ còn nhận traffic.
 
 Render Free không có pre-deploy command và Shell. Vì vậy, phương án này dùng
-Docker Command để chuẩn bị database, không yêu cầu chạy seed thủ công qua Shell.
+Docker Command để chạy script trong image, không yêu cầu chạy seed thủ công qua Shell.
+Không ghép nhiều lệnh trực tiếp trong ô Docker Command để tránh lỗi xử lý dấu nháy.
+Script dùng `exec` để API nhận tín hiệu dừng trực tiếp. Image phải được build lại
+sau khi thêm script; image cũ không có `/app/start-render.sh`.
 
 ### 3.3. Web
 

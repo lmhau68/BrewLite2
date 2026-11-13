@@ -147,8 +147,7 @@ jobs:
             -e DB_MIGRATIONS_RUN=false \
             -e CORS_ORIGIN=http://127.0.0.1:10001 \
             -e PORT=10000 \
-            brewlite-api:ci /bin/sh -c \
-            'node dist/database/prepare-production.js && exec node dist/main.js'
+            brewlite-api:ci /bin/sh /app/start-render.sh
           docker run --detach --name brewlite-web-ci --network host \
             -e PORT=10001 brewlite-web:ci
 
