@@ -77,7 +77,10 @@ Các biến môi trường của API:
 | `CORS_ORIGIN` | URL HTTPS của Web; cập nhật sau khi tạo Web Service |
 | `DB_MIGRATIONS_RUN` | `false` |
 | `DB_LOGGING` | `false` |
-| `MOCK_PAYMENT_OUTCOME` | `SUCCESS`, `FAILED` hoặc `TIMEOUT` theo kịch bản demo |
+| `VNPAY_TMN_CODE` | TmnCode do merchant test VNPay cấp |
+| `VNPAY_HASH_SECRET` | HashSecret của merchant test; lưu dưới dạng secret, không đưa vào Git |
+| `VNPAY_IPN_URL` | `https://<api-service>.onrender.com/payments/vnpay/ipn`, phải cấu hình trùng với IPN URL của merchant VNPay |
+| `WEB_APP_URL` | URL HTTPS công khai của Web Service, ví dụ `https://brewlite-web-it8r.onrender.com` |
 | `SEED_STAFF_EMAIL` | Email nhân viên demo nếu cần tạo tài khoản ban đầu |
 | `SEED_STAFF_PASSWORD` | Mật khẩu nhân viên demo, cấu hình cùng email trước lần khởi động đầu |
 | `SEED_STAFF_NAME` | Tên nhân viên demo nếu cần |
@@ -112,6 +115,31 @@ sau khi thêm script; image cũ không có `/app/start-render.sh`.
 
 `NEXT_PUBLIC_API_URL` được nhúng khi build image Web. Đổi URL API phải build lại
 image; chỉ thêm biến vào môi trường chạy của Render không thay đổi bản Web đã build.
+Giữ `WEB_APP_URL` của API đồng bộ với URL Web Service và đặt URL này trong
+`CORS_ORIGIN` để trình duyệt gọi API được.
+
+### 3.4. VNPay Sandbox
+
+Đăng ký merchant test tại [VNPay Test](https://pay.vnpaytest.vn/dev-registration).
+Có thể điền URL Web Service công khai vào trường website của form, ví dụ
+`https://brewlite-web-it8r.onrender.com`. Việc VNPay chấp nhận website demo và
+cấp merchant test do VNPay quyết định; không đưa thông tin giả hoặc thông tin
+đăng nhập vào repository.
+
+Sau khi có `TmnCode` và `HashSecret`, nhập chúng trực tiếp vào Environment của
+API Web Service trên Render, không commit vào `.env.example` hoặc Git. Đặt
+`VNPAY_IPN_URL` thành URL API công khai cộng với `/payments/vnpay/ipn`, sau đó
+khai báo chính xác URL callback này trong cấu hình merchant VNPay. Ví dụ:
+
+```text
+VNPAY_IPN_URL=https://<api-service>.onrender.com/payments/vnpay/ipn
+WEB_APP_URL=https://brewlite-web-it8r.onrender.com
+```
+
+Sau khi cập nhật Environment, triển khai lại API. VNPay Sandbox thanh toán chỉ
+hoàn tất trong ứng dụng khi IPN tới API, chữ ký và số tiền được xác minh. URL
+Return của trình duyệt chỉ đưa người dùng về website; không dùng Return để đánh
+dấu đơn đã thanh toán. Dùng riêng dữ liệu test do VNPay công bố.
 
 ## 4. Khởi tạo image lần đầu
 

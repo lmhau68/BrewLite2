@@ -6,8 +6,11 @@ import {
   ParseUUIDPipe,
   Post,
   Body,
+  Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { CurrentUser } from '../../common/auth/current-user.js';
 import type { AuthenticatedUser } from '../../common/auth/current-user.js';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard.js';
@@ -24,34 +27,19 @@ export class PaymentsController {
     @CurrentUser() user: AuthenticatedUser,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body() dto: CreatePaymentDto,
+    @Req() request: Request,
   ) {
-    return this.paymentsService.processMockPayment(user.id, idempotencyKey, dto);
+    return this.paymentsService.createPayment(
+      user.id,
+      idempotencyKey,
+      dto,
+      request.ip ?? request.socket.remoteAddress ?? '127.0.0.1',
+    );
   }
 
-  @Post(':paymentId/mock-scan')
-  simulateQrScan(
-    @Param('paymentId', new ParseUUIDPipe({ version: '4' })) paymentId: string,
-    @Body('scanToken') scanToken: string | undefined,
-  ) {
-    return this.paymentsService.simulateQrScan(paymentId, scanToken);
-  }
-
-  @Post(':paymentId/mock-cancel')
-  @UseGuards(JwtAuthGuard)
-  cancelQrPayment(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('paymentId', new ParseUUIDPipe({ version: '4' })) paymentId: string,
-  ) {
-    return this.paymentsService.cancelQrPayment(paymentId, user.id);
-  }
-
-  @Post(':paymentId/mock-result')
-  @UseGuards(JwtAuthGuard)
-  simulateCardResult(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('paymentId', new ParseUUIDPipe({ version: '4' })) paymentId: string,
-  ) {
-    return this.paymentsService.simulateCardResult(paymentId, user.id);
+  @Get('vnpay/ipn')
+  handleVnpayIpn(@Query() query: Record<string, unknown>) {
+    return this.paymentsService.handleVnpayIpn(query);
   }
 
   @Get(':paymentId')

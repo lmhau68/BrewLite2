@@ -12,6 +12,7 @@ import type { Order } from './order.entity.js';
 export enum PaymentMethod {
   WALLET = 'WALLET',
   CARD = 'CARD',
+  VNPAY = 'VNPAY',
 }
 
 export enum PaymentStatus {
@@ -75,6 +76,9 @@ export class Payment {
 
   @Column({ name: 'gateway_response', type: 'varchar', length: 200, nullable: true })
   gatewayResponse!: string | null;
+
+  @Column({ name: 'gateway_payment_url', type: 'text', nullable: true })
+  gatewayPaymentUrl!: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

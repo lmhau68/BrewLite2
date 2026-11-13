@@ -2,13 +2,40 @@ import { expect, test } from '@playwright/test';
 
 /**
  * E2E Test (Task 5.2): Luồng từ Menu → Chọn tùy chọn → Giỏ hàng →
- * Đăng ký tài khoản → Đặt đơn → Thanh toán mô phỏng → Xác nhận đơn.
+ * Đăng ký tài khoản → Đặt đơn → Tạo VNPay Sandbox checkout.
  */
 test.describe('BrewLite Checkout End-to-End Flow', () => {
-  test('hoàn tất luồng từ xem menu đến thanh toán và xác nhận đơn hàng', async ({
+  test('tạo link VNPay Sandbox sau khi đặt đơn', async ({
     page,
   }) => {
     const uniqueEmail = `e2e.${Date.now()}@brewlite.local`;
+    await page.route('**/payments', async (route) => {
+      if (route.request().method() !== 'POST') {
+        await route.continue();
+        return;
+      }
+      const { orderId } = route.request().postDataJSON() as {
+        orderId: string;
+      };
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: '00000000-0000-4000-8000-000000000099',
+          orderId,
+          amount: 36000,
+          method: 'VNPAY',
+          status: 'PENDING',
+          transactionId: 'VNPAY_E2E_TEST',
+          bankCode: null,
+          maskedAccount: null,
+          checkoutUrl:
+            'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?e2e=1',
+          orderStatus: 'PENDING',
+          createdAt: new Date().toISOString(),
+        }),
+      });
+    });
 
     // 1. Tạo tài khoản khách hàng mới tại /register
     await page.goto('/register');
@@ -59,36 +86,23 @@ test.describe('BrewLite Checkout End-to-End Flow', () => {
 
     await page.getByRole('button', { name: 'Đặt hàng và thanh toán' }).click();
 
-    // 5. Trang Thanh toán mô phỏng (/checkout/payment/[orderId])
+    // 5. Trang thanh toán VNPay Sandbox
     await expect(page).toHaveURL(/\/checkout\/payment\/[0-9a-f-]+$/i);
     await expect(
-      page.getByRole('heading', { name: 'Thanh toán mô phỏng' }),
+      page.getByRole('heading', { name: 'Thanh toán đơn hàng' }),
     ).toBeVisible();
 
-    // Chuyển từ QR đang chờ sang thanh toán Thẻ giả lập
-    await page.getByRole('button', { name: 'Hủy QR và chọn thẻ' }).click();
-    await page
-      .getByLabel('Số tài khoản / thẻ giả lập')
-      .fill('123456789012');
-    await page.getByRole('button', { name: 'Xác nhận thanh toán' }).click();
-
-    // 6. Kiểm tra thanh toán thành công và xem xác nhận đơn hàng
     await expect(
-      page.getByText('Thanh toán thành công.', { exact: true }),
+      page.getByRole('button', { name: 'Tạo giao dịch VNPay Sandbox' }),
     ).toBeVisible();
+    await expect(page.getByText('Ví điện tử (QR)')).toHaveCount(0);
+    await expect(page.getByText('Thẻ / Ngân hàng')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Tạo giao dịch VNPay Sandbox' }).click();
     await expect(
-      page.getByText('Thanh toán thành công. Giỏ hàng đã được cập nhật.'),
-    ).toBeVisible();
-    await expect(page.getByText(/Trạng thái đơn:\s*PAID/i)).toBeVisible();
-
-    await page.getByRole('link', { name: 'Xem chi tiết đơn' }).click();
-    await expect(page).toHaveURL(/\/orders\/[0-9a-f-]+$/i);
-    await expect(
-      page.getByRole('heading', { name: 'Chi tiết đơn hàng' }),
-    ).toBeVisible();
-    const orderDetail = page.locator('.order-detail');
-    await expect(orderDetail).toContainText('Đã thanh toán');
-    await expect(orderDetail).toContainText('Bạc Xỉu Đá × 1');
-    await expect(orderDetail).toContainText('SUCCESS');
+      page.getByRole('link', { name: 'Tiếp tục thanh toán trên VNPay Sandbox' }),
+    ).toHaveAttribute(
+      'href',
+      'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?e2e=1',
+    );
   });
 });

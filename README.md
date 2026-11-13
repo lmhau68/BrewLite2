@@ -4,8 +4,9 @@
 **Xem menu → Chọn tùy chọn → Giỏ hàng → Đặt đơn → Thanh toán → Theo dõi đơn**.
 
 > **Trạng thái hiện tại — Sprint 2 (Task 5.1).** Ứng dụng có luồng từ xem menu,
-> chọn size/topping, giỏ hàng, đăng nhập, đặt đơn đến thanh toán mô phỏng và
-> theo dõi/cập nhật trạng thái đơn.
+> chọn size/topping, giỏ hàng, đăng nhập, đặt đơn đến checkout VNPay Sandbox và
+> theo dõi/cập nhật trạng thái đơn. Thanh toán hỗ trợ VNPay Sandbox và luồng
+> mô phỏng nội bộ để kiểm thử offline.
 
 ## Công nghệ
 
@@ -43,78 +44,46 @@ Sau đó truy cập:
 | Health check | http://localhost:3001/health |
 
 Trước khi khởi động, thay `JWT_SECRET` trong `.env` bằng một chuỗi ngẫu nhiên
-riêng tư dài tối thiểu 32 ký tự. `MOCK_PAYMENT_OUTCOME` nhận `SUCCESS`,
-`FAILED` hoặc `TIMEOUT` để thử các kết quả thanh toán giả lập. Thanh toán ngân
-hàng/QR chỉ phục vụ demo; không kết nối ngân hàng và không xử lý tiền thật.
+riêng tư dài tối thiểu 32 ký tự. VNPay Sandbox là môi trường kiểm thử, không
+thu tiền thật. Luồng mô phỏng nội bộ vẫn có thể dùng khi chưa cấu hình VNPay.
 
-### Quét QR demo bằng điện thoại
+### Tích hợp VNPay Sandbox
 
-QR thanh toán là một liên kết demo. Điện thoại dùng camera quét mã và mở liên
-kết; máy chủ xác nhận outcome mô phỏng, rồi trang thanh toán trên máy tính tự
-cập nhật trạng thái. Đây **không phải** QR chuyển khoản và không thể kiểm tra
-giao dịch ngân hàng thật.
+Đăng ký merchant test tại [VNPay Test](https://pay.vnpaytest.vn/dev-registration)
+để nhận `TmnCode` và `HashSecret`. Điền chúng vào `.env` cùng các biến:
 
-Để điện thoại mở được liên kết, máy tính và điện thoại cần cùng mạng Wi-Fi:
-
-1. Với cấu hình mặc định, mở web trên máy tính tại
-   `http://192.168.1.12:3000`. Nếu mở bằng `localhost`, QR tự thay địa chỉ đó
-   bằng `192.168.1.12`; không cần nhập IP trong giao diện.
-2. Khi mở trang thanh toán của đơn mới, giao dịch QR `PENDING` và mã QR được
-   tạo tự động. Dùng camera điện thoại quét rồi mở liên kết; chỉ lúc đó kết quả
-   mô phỏng mới được xác nhận. Trang máy tính tự cập nhật và chỉ xóa món khỏi
-   giỏ khi thanh toán thành công.
-3. Nếu muốn dùng thẻ thay vì QR đang chờ, chọn **Hủy QR và chọn thẻ**. Việc
-   quét QR đã hủy không thể xác nhận thanh toán.
-4. Nếu IP mạng nội bộ thay đổi, đặt `LAN_HOST` và `NEXT_PUBLIC_LAN_HOST` trong
-   `.env` thành IP mới rồi chạy lại `docker compose up -d --build`. Cho phép
-   cổng 3000/3001 qua Windows Firewall trên mạng Private.
-
-Nếu không kết nối được, kiểm tra hai thiết bị cùng Wi-Fi và Windows Firewall
-cho phép cổng 3000/3001 trong mạng riêng.
-
-### Kiểm thử các kết quả thanh toán mô phỏng
-
-Đặt `MOCK_PAYMENT_OUTCOME` trong `.env` rồi khởi động lại API trước mỗi lần đổi
-giá trị. Dùng một đơn mới đang chờ thanh toán và một `Idempotency-Key` UUID mới
-cho mỗi lần POST. QR luôn tạo giao dịch `PENDING`; giao dịch được xác nhận khi
-điện thoại mở URL mã QR. Việc tra cứu trạng thái chỉ đọc.
-
-Để thử lỗi, đổi giá trị trong `.env` thành `MOCK_PAYMENT_OUTCOME=FAILED`, rồi
-khởi động lại API. Với Docker Compose, chạy:
-
-```bash
-docker compose up -d --force-recreate api
+```env
+VNPAY_TMN_CODE=<TmnCode>
+VNPAY_HASH_SECRET=<HashSecret>
+VNPAY_IPN_URL=https://<public-host>/payments/vnpay/ipn
+WEB_APP_URL=http://localhost:3000
 ```
 
-Chạy local thì khởi động lại tiến trình API.
+`VNPAY_IPN_URL` phải là URL công khai mà VNPay có thể gọi tới, đồng thời phải
+được khai báo trong cấu hình merchant. Khi chạy local, dùng tunnel HTTPS hoặc
+môi trường staging cho API callback; `localhost` không nhận được IPN từ VNPay.
+Không gửi `HashSecret` qua chat và không commit `.env`. Sau khi cấu hình, chạy:
 
 ```bash
-# Tạo giao dịch QR (phản hồi luôn là PENDING)
-curl -X POST http://localhost:3001/payments \
-  -H "Authorization: Bearer <JWT>" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: 00000000-0000-4000-8000-000000000003" \
-  -d '{"orderId":"<ORDER_UUID>","method":"WALLET"}'
-
-# Điện thoại sẽ gọi endpoint này khi mở link QR (không cần JWT; cần token trong QR)
-curl -X POST http://localhost:3001/payments/<PAYMENT_UUID>/mock-scan \
-  -H "Content-Type: application/json" \
-  -d '{"scanToken":"<QR_SCAN_TOKEN>"}'
+docker compose up -d --build
 ```
 
-| `MOCK_PAYMENT_OUTCOME` | Kết quả mong đợi |
-|---|---|
-| `SUCCESS` | Điện thoại mở link QR: giao dịch thành `SUCCESS`, đơn thành `PAID`; giao diện máy tính cập nhật giỏ hàng. |
-| `FAILED` | Điện thoại mở link QR: giao dịch thành `FAILED`, đơn thành `PAYMENT_FAILED`; có thể tạo giao dịch mới với key khác. |
-| `TIMEOUT` | Link QR báo chưa xác định và giữ `PENDING`; `GET /payments/<PAYMENT_UUID>` chỉ đọc. Có thể đổi outcome rồi quét/mở lại link. Với thẻ đang `PENDING`, giao diện có nút mô phỏng nhận kết quả ngân hàng riêng. |
+Ở trang thanh toán, chọn **VNPay Sandbox**. Ứng dụng tạo checkout URL ở backend
+và chỉ xác nhận đơn sau khi backend nhận, kiểm tra chữ ký IPN và đối chiếu số
+tiền. URL Return chỉ đưa khách quay lại trang đơn, không tự xác nhận thanh toán.
+VNPay yêu cầu số tiền tối thiểu 5.000 VND.
 
-Để thử từng outcome độc lập, nên dùng đơn mới. Có thể thử lại đơn `FAILED` với
-key mới; với `TIMEOUT`, không tạo POST giao dịch mới. Gửi lại cùng key và cùng
-nội dung sẽ trả về cùng giao dịch; dùng lại key với nội dung khác sẽ bị từ chối.
+Thông tin thẻ kiểm thử và kịch bản thành công/thất bại được công bố trong
+[tài liệu demo VNPay](https://sandbox.vnpayment.vn/apis/vnpay-demo/). Chỉ dùng
+thông tin test tại sandbox; không dùng thông tin thẻ/tài khoản thật.
 
-> Đây là mô phỏng nội bộ: mở liên kết QR đánh dấu kết quả giả lập theo
-> `MOCK_PAYMENT_OUTCOME`, không kết nối ngân hàng/cổng thanh toán và không nhận
-> tiền thật. Muốn xác minh giao dịch thật cần tích hợp nhà cung cấp.
+### Kiểm thử VNPay Sandbox
+
+Tạo đơn từ 5.000 VND trở lên, chọn VNPay Sandbox và tiếp tục tại trang checkout của VNPay. BrewLite tạo link thanh toán, không tự tạo mã QR. Nếu VNPay cung cấp VNPAY-QR cho merchant/test account, chọn phương thức đó tại trang checkout; nếu không, dùng phương thức kiểm thử khác được hiển thị (ví dụ thẻ test).
+
+Chỉ dùng thông tin giao dịch kiểm thử VNPay, không dùng thẻ hay tài khoản thật.
+Chỉ IPN hợp lệ mới cập nhật giao dịch thành công. Các phương thức QR/thẻ mô
+phỏng nội bộ đã bị gỡ; API chỉ nhận VNPay Sandbox.
 
 Migration và seed được chạy tự động trước khi container `api` khởi động.
 Để dùng màn hình nhân viên trong demo, điền `SEED_STAFF_EMAIL` và
@@ -200,10 +169,8 @@ Chạy từ thư mục `apps/web`:
 | GET | `/auth/me` | Tài khoản hiện tại (JWT). |
 | POST / GET | `/orders` | Tạo đơn idempotent và liệt kê đơn của tài khoản (JWT). |
 | GET | `/orders/:orderId` | Chi tiết đơn thuộc tài khoản (JWT). |
-| POST / GET | `/payments` | Tạo giao dịch mô phỏng / tra cứu giao dịch (JWT). |
-| POST | `/payments/:paymentId/mock-scan` | Xác nhận link QR demo bằng token một lần từ mã QR. |
-| POST | `/payments/:paymentId/mock-cancel` | Hủy giao dịch QR đang chờ để đổi sang thẻ (JWT). |
-| POST | `/payments/:paymentId/mock-result` | Mô phỏng kết quả thẻ/ngân hàng khi giao dịch timeout (JWT, demo). |
+| POST / GET | `/payments` | Tạo giao dịch VNPay Sandbox hoặc tra cứu giao dịch (JWT). |
+| GET | `/payments/vnpay/ipn` | Nhận và xác minh IPN từ VNPay Sandbox (không dùng JWT; cần chữ ký hợp lệ). |
 | GET | `/staff/orders` | Danh sách đơn cho nhân viên/quản lý (JWT, phân quyền). |
 | PATCH | `/staff/orders/:orderId/status` | Cập nhật trạng thái đơn hợp lệ (JWT, phân quyền). |
 
@@ -217,8 +184,7 @@ Giá trả về là **số nguyên VND** theo BR-01.
 | `/products/:id` | Chi tiết món: ảnh, mô tả, giá, **kích thước (S/M/L kèm phụ thu)** và **topping hỗ trợ** (FR-02). |
 | `/cart` | Sửa giỏ hàng và tạo đơn. |
 | `/login`, `/register` | Đăng nhập và đăng ký khách hàng. |
-| `/checkout/payment/:orderId` | Thanh toán mô phỏng; quét link QR bằng điện thoại hoặc dùng thẻ giả lập. |
-| `/mock-payment/scan` | Đích đến của link QR demo; tự gửi kết quả mô phỏng về API. |
+| `/checkout/payment/:orderId` | Tạo giao dịch VNPay Sandbox và tiếp tục thanh toán tại cổng VNPay. |
 | `/orders`, `/orders/:orderId` | Lịch sử, chi tiết và trạng thái đơn của khách. |
 | `/staff/orders` | Nhân viên/quản lý xem đơn và cập nhật trạng thái. |
 
