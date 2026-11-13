@@ -20,6 +20,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
+COPY start-render.sh ./start-render.sh
 
 EXPOSE 3001
 

@@ -28,7 +28,7 @@ Ban đầu nhóm định chạy hoàn toàn trên Docker Compose local. Giảng 
 | Image tag | Commit SHA hoặc semver (`vX.Y.Z`) |
 | Registry | **GHCR** (đề xuất): lưu image đã gắn tag. Render chạy "image từ registry"; nếu image private thì cấu hình credential của registry trên Render |
 | CD / deploy | Quality gate → build image → push GHCR → gọi **Render deploy hook/API** để deploy image tag mới → migration → smoke test (`GET /health` của API, trang menu của web) → dừng và báo lỗi nếu smoke test thất bại |
-| Migration | Với Render Free, Docker Command chạy `node dist/database/prepare-production.js` trước `exec node dist/main.js`. Preparation dùng advisory lock, migration trong transaction và chỉ seed khi cả catalog sản phẩm/topping còn rỗng; API chỉ mở cổng sau khi thành công. Gói trả phí có thể chuyển preparation sang pre-deploy command. Migration phải tương thích với API cũ còn nhận traffic |
+| Migration | Với Render Free, Docker Command chạy `/bin/sh /app/start-render.sh`; script chuẩn bị database trước `exec node dist/main.js`, dừng ngay nếu preparation thất bại. Preparation dùng advisory lock, migration trong transaction và chỉ seed khi cả catalog sản phẩm/topping còn rỗng; API chỉ mở cổng sau khi thành công. Gói trả phí có thể chuyển preparation sang pre-deploy command. Migration phải tương thích với API cũ còn nhận traffic |
 | Health check | Khai báo **Health Check Path = `/health`** cho `api` trên Render; Render chỉ chuyển lưu lượng khi health check đạt |
 | Secret | **Environment Variables của Render** (`DATABASE_URL`, `JWT_SECRET`...) và **GitHub Secrets** cho CI/CD (Render API key, deploy hook, GHCR token). Không commit secret; không in ra log CI |
 | Log | Log stdout JSON (ADR-007), xem ở tab Logs của từng service trên Render |
