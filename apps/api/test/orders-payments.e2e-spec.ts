@@ -20,6 +20,10 @@ import {
   PaymentMethod,
   PaymentStatus,
 } from '../src/database/entities/payment.entity.js';
+import {
+  User,
+  UserRole,
+} from '../src/database/entities/user.entity.js';
 import { migrations } from '../src/database/migrations/index.js';
 import { AuthModule } from '../src/modules/auth/auth.module.js';
 import { HealthModule } from '../src/modules/health/health.module.js';
@@ -38,6 +42,7 @@ describe.skipIf(!databaseUrl)(
     let dataSource: DataSource;
     let app: INestApplication;
     let accessToken: string;
+    let staffAccessToken: string;
     let product: Product;
     let sizeM: ProductSize;
     let topping: Topping;
@@ -148,6 +153,26 @@ describe.skipIf(!databaseUrl)(
 
       const registerBody = registerResponse.body as { accessToken: string };
       accessToken = registerBody.accessToken;
+
+      const staffEmail = `staff-${randomUUID()}@brewlite.local`;
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          fullName: 'Nhân viên Integration',
+          email: staffEmail,
+          password: 'StaffPassword123!',
+        })
+        .expect(201);
+      await dataSource
+        .getRepository(User)
+        .update({ email: staffEmail }, { role: UserRole.STAFF });
+      const staffLogin = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: staffEmail, password: 'StaffPassword123!' })
+        .expect(201);
+      staffAccessToken = (
+        staffLogin.body as { accessToken: string }
+      ).accessToken;
     }, 30000);
 
     afterAll(async () => {
@@ -374,6 +399,230 @@ describe.skipIf(!databaseUrl)(
       };
       expect(scannedBody.status).toBe(PaymentStatus.SUCCESS);
       expect(scannedBody.orderStatus).toBe(OrderStatus.PAID);
+    });
+
+    it('requires a staff member to cancel an order and restores inventory only once after QR cancellation', async () => {
+      const productBefore = await dataSource
+        .getRepository(Product)
+        .findOneByOrFail({ id: product.id });
+      const orderRes = await request(app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .set('Idempotency-Key', randomUUID())
+        .send({
+          items: [{ productId: product.id, sizeId: sizeM.id, quantity: 1 }],
+        })
+        .expect(201);
+      const orderId = (orderRes.body as { id: string }).id;
+
+      const qrRes = await request(app.getHttpServer())
+        .post('/payments')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .set('Idempotency-Key', randomUUID())
+        .send({ orderId, method: PaymentMethod.WALLET })
+        .expect(201);
+      const qrPayment = qrRes.body as {
+        id: string;
+        scanToken: string;
+        qrScanToken: string;
+        status: PaymentStatus;
+      };
+      expect(qrPayment.status).toBe(PaymentStatus.PENDING);
+
+      await request(app.getHttpServer())
+        .patch(`/staff/orders/${orderId}/status`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: OrderStatus.CANCELLED })
+        .expect(403);
+      await request(app.getHttpServer())
+        .patch(`/staff/orders/${orderId}/status`)
+        .set('Authorization', `Bearer ${staffAccessToken}`)
+        .send({ status: OrderStatus.CANCELLED })
+        .expect(409);
+
+      const paymentCancel = await request(app.getHttpServer())
+        .post(`/payments/${qrPayment.id}/mock-cancel`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(201);
+      expect((paymentCancel.body as { status: PaymentStatus }).status).toBe(
+        PaymentStatus.FAILED,
+      );
+
+      const cancelResponse = await request(app.getHttpServer())
+        .patch(`/staff/orders/${orderId}/status`)
+        .set('Authorization', `Bearer ${staffAccessToken}`)
+        .send({ status: OrderStatus.CANCELLED })
+        .expect(200);
+      expect((cancelResponse.body as { status: OrderStatus }).status).toBe(
+        OrderStatus.CANCELLED,
+      );
+
+      await request(app.getHttpServer())
+        .patch(`/staff/orders/${orderId}/status`)
+        .set('Authorization', `Bearer ${staffAccessToken}`)
+        .send({ status: OrderStatus.CANCELLED })
+        .expect(409);
+      await request(app.getHttpServer())
+        .post(`/payments/${qrPayment.id}/mock-scan`)
+        .send({ scanToken: qrPayment.qrScanToken })
+        .expect(201)
+        .expect(({ body }) => {
+          expect((body as { status: PaymentStatus }).status).toBe(
+            PaymentStatus.FAILED,
+          );
+        });
+
+      const savedOrder = await dataSource
+        .getRepository(Order)
+        .findOneByOrFail({ id: orderId });
+      const productAfter = await dataSource
+        .getRepository(Product)
+        .findOneByOrFail({ id: product.id });
+      expect(savedOrder.status).toBe(OrderStatus.CANCELLED);
+      expect(productAfter.stockQuantity).toBe(productBefore.stockQuantity);
+    });
+
+    it('keeps a paid order and its inventory unchanged when staff attempts cancellation', async () => {
+      const productBefore = await dataSource
+        .getRepository(Product)
+        .findOneByOrFail({ id: product.id });
+      const orderRes = await request(app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .set('Idempotency-Key', randomUUID())
+        .send({
+          items: [{ productId: product.id, sizeId: sizeM.id, quantity: 1 }],
+        })
+        .expect(201);
+      const orderId = (orderRes.body as { id: string }).id;
+      await request(app.getHttpServer())
+        .post('/payments')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .set('Idempotency-Key', randomUUID())
+        .send({
+          orderId,
+          method: PaymentMethod.CARD,
+          bankCode: 'VCB',
+          accountNumber: '123456789012',
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .patch(`/staff/orders/${orderId}/status`)
+        .set('Authorization', `Bearer ${staffAccessToken}`)
+        .send({ status: OrderStatus.CANCELLED })
+        .expect(409);
+
+      const savedOrder = await dataSource
+        .getRepository(Order)
+        .findOneByOrFail({ id: orderId });
+      const productAfter = await dataSource
+        .getRepository(Product)
+        .findOneByOrFail({ id: product.id });
+      expect(savedOrder.status).toBe(OrderStatus.PAID);
+      expect(productAfter.stockQuantity).toBe(productBefore.stockQuantity - 1);
+    });
+
+    it('returns the same payment for simultaneous requests with one idempotency key', async () => {
+      const orderRes = await request(app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .set('Idempotency-Key', randomUUID())
+        .send({
+          items: [{ productId: product.id, sizeId: sizeM.id, quantity: 1 }],
+        })
+        .expect(201);
+      const orderId = (orderRes.body as { id: string }).id;
+      const idempotencyKey = randomUUID();
+      const paymentRequest = () =>
+        request(app.getHttpServer())
+          .post('/payments')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .set('Idempotency-Key', idempotencyKey)
+          .send({
+            orderId,
+            method: PaymentMethod.CARD,
+            bankCode: 'VCB',
+            accountNumber: '123456789012',
+          });
+
+      const [first, replay] = await Promise.all([
+        paymentRequest(),
+        paymentRequest(),
+      ]);
+      expect(first.status).toBe(201);
+      expect(replay.status).toBe(201);
+      expect((first.body as { id: string }).id).toBe(
+        (replay.body as { id: string }).id,
+      );
+      expect(
+        await dataSource.getRepository(Payment).count({ where: { orderId } }),
+      ).toBe(1);
+      expect(
+        (await dataSource.getRepository(Order).findOneByOrFail({ id: orderId }))
+          .status,
+      ).toBe(OrderStatus.PAID);
+    });
+
+    it('serializes a simultaneous successful payment and staff cancellation', async () => {
+      const productBefore = await dataSource
+        .getRepository(Product)
+        .findOneByOrFail({ id: product.id });
+      const orderRes = await request(app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .set('Idempotency-Key', randomUUID())
+        .send({
+          items: [{ productId: product.id, sizeId: sizeM.id, quantity: 1 }],
+        })
+        .expect(201);
+      const orderId = (orderRes.body as { id: string }).id;
+
+      const [paymentResponse, cancellationResponse] = await Promise.all([
+        request(app.getHttpServer())
+          .post('/payments')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .set('Idempotency-Key', randomUUID())
+          .send({
+            orderId,
+            method: PaymentMethod.CARD,
+            bankCode: 'VCB',
+            accountNumber: '123456789012',
+          }),
+        request(app.getHttpServer())
+          .patch(`/staff/orders/${orderId}/status`)
+          .set('Authorization', `Bearer ${staffAccessToken}`)
+          .send({ status: OrderStatus.CANCELLED }),
+      ]);
+
+      expect([201, 409]).toContain(paymentResponse.status);
+      expect([200, 409]).toContain(cancellationResponse.status);
+      expect(
+        Number(paymentResponse.status === 201) +
+          Number(cancellationResponse.status === 200),
+      ).toBe(1);
+
+      const savedOrder = await dataSource
+        .getRepository(Order)
+        .findOneByOrFail({ id: orderId });
+      const savedPayments = await dataSource
+        .getRepository(Payment)
+        .find({ where: { orderId } });
+      const productAfter = await dataSource
+        .getRepository(Product)
+        .findOneByOrFail({ id: product.id });
+
+      if (paymentResponse.status === 201) {
+        expect(savedOrder.status).toBe(OrderStatus.PAID);
+        expect(savedPayments).toHaveLength(1);
+        expect(savedPayments[0]?.status).toBe(PaymentStatus.SUCCESS);
+        expect(productAfter.stockQuantity).toBe(productBefore.stockQuantity - 1);
+      } else {
+        expect(cancellationResponse.status).toBe(200);
+        expect(savedOrder.status).toBe(OrderStatus.CANCELLED);
+        expect(savedPayments).toHaveLength(0);
+        expect(productAfter.stockQuantity).toBe(productBefore.stockQuantity);
+      }
     });
   },
 );
