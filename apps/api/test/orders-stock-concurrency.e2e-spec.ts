@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { ConflictException } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { Test } from '@nestjs/testing';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildDataSourceOptions } from '../src/config/database.config.js';
@@ -10,27 +14,30 @@ import {
   User,
 } from '../src/database/entities/index.js';
 import { migrations } from '../src/database/migrations/index.js';
-import { UserRole } from '../src/database/entities/user.entity.js';
-import { OrdersService } from '../src/modules/orders/orders.service.js';
+import { AuthModule } from '../src/modules/auth/auth.module.js';
+import { OrdersModule } from '../src/modules/orders/orders.module.js';
 
 const databaseUrl = process.env['TEST_DATABASE_URL'];
 const schemaName = `brewlite_stock_test_${randomUUID().replace(/-/g, '')}`;
+const JWT_TEST_SECRET = 'brewlite-stock-integration-test-jwt-secret-2026';
 
 describe.skipIf(!databaseUrl)(
-  'OrdersService PostgreSQL stock concurrency',
+  'Orders HTTP API PostgreSQL stock concurrency',
   () => {
     let adminDataSource: DataSource;
     let dataSource: DataSource;
-    let service: OrdersService;
+    let app: INestApplication;
+    let customers: Array<{ id: string; accessToken: string }>;
 
     beforeAll(async () => {
       if (!databaseUrl) throw new Error('TEST_DATABASE_URL is required');
 
+      process.env['JWT_SECRET'] = JWT_TEST_SECRET;
       adminDataSource = new DataSource({ type: 'postgres', url: databaseUrl });
       await adminDataSource.initialize();
       await adminDataSource.query(`CREATE SCHEMA "${schemaName}"`);
 
-      dataSource = new DataSource({
+      const dbOptions = {
         ...buildDataSourceOptions({
           DATABASE_URL: databaseUrl,
           DB_LOGGING: 'false',
@@ -40,13 +47,62 @@ describe.skipIf(!databaseUrl)(
         migrationsRun: false,
         migrationsTableName: 'brewlite_test_migrations',
         extra: { options: `-c search_path=${schemaName}` },
-      });
-      await dataSource.initialize();
+      };
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          ConfigModule.forRoot({
+            isGlobal: true,
+            ignoreEnvFile: true,
+            load: [() => ({ JWT_SECRET: JWT_TEST_SECRET })],
+          }),
+          TypeOrmModule.forRoot({
+            ...dbOptions,
+            autoLoadEntities: false,
+            synchronize: false,
+          }),
+          AuthModule,
+          OrdersModule,
+        ],
+      }).compile();
+
+      app = moduleRef.createNestApplication();
+      app.useGlobalPipes(
+        new ValidationPipe({
+          whitelist: true,
+          forbidNonWhitelisted: true,
+          transform: true,
+        }),
+      );
+      await app.init();
+
+      dataSource = moduleRef.get(DataSource);
       await dataSource.runMigrations();
-      service = new OrdersService(dataSource, dataSource.getRepository(Order));
+
+      customers = [];
+      for (const fullName of ['Customer One', 'Customer Two']) {
+        const email = `customer-${randomUUID()}@stock-test.invalid`;
+        const registerResponse = await request(app.getHttpServer())
+          .post('/auth/register')
+          .send({
+            fullName,
+            email,
+            password: 'CustomerPassword123!',
+          })
+          .expect(201);
+        const user = await dataSource
+          .getRepository(User)
+          .findOneByOrFail({ email });
+        customers.push({
+          id: user.id,
+          accessToken: (registerResponse.body as { accessToken: string })
+            .accessToken,
+        });
+      }
     }, 30000);
 
     afterAll(async () => {
+      if (app) await app.close();
       if (dataSource?.isInitialized) await dataSource.destroy();
       if (adminDataSource?.isInitialized) {
         await adminDataSource.query(
@@ -57,12 +113,11 @@ describe.skipIf(!databaseUrl)(
     });
 
     it('allows only one concurrent order when a product has one unit in stock', async () => {
-      const user = await dataSource.getRepository(User).save({
-        email: `${randomUUID()}@stock-test.invalid`,
-        passwordHash: 'not-used-by-this-test',
-        fullName: 'Stock Test',
-        role: UserRole.CUSTOMER,
-      });
+      const [customerOne, customerTwo] = customers;
+      if (!customerOne || !customerTwo || customerOne.id === customerTwo.id) {
+        throw new Error('The concurrency test requires two distinct users');
+      }
+
       const product = await dataSource.getRepository(Product).save({
         name: 'Concurrency Test Drink',
         slug: `concurrency-test-${randomUUID()}`,
@@ -78,29 +133,30 @@ describe.skipIf(!databaseUrl)(
         items: [{ productId: product.id, quantity: 1 }],
       };
 
-      const results = await Promise.allSettled([
-        service.createOrder(user.id, randomUUID(), requestedItems),
-        service.createOrder(user.id, randomUUID(), requestedItems),
-      ]);
+      const req1 = request(app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerOne.accessToken}`)
+        .set('Idempotency-Key', randomUUID())
+        .send(requestedItems);
+      const req2 = request(app.getHttpServer())
+        .post('/orders')
+        .set('Authorization', `Bearer ${customerTwo.accessToken}`)
+        .set('Idempotency-Key', randomUUID())
+        .send(requestedItems);
+      const [res1, res2] = await Promise.all([req1, req2]);
 
-      const fulfilled = results.filter(
-        (result) => result.status === 'fulfilled',
-      );
-      const rejected = results.filter((result) => result.status === 'rejected');
-      expect(fulfilled).toHaveLength(1);
-      expect(rejected).toHaveLength(1);
-      if (rejected[0]?.status === 'rejected') {
-        expect(rejected[0].reason).toBeInstanceOf(ConflictException);
-      }
+      expect([res1.status, res2.status].sort((a, b) => a - b)).toEqual([
+        201, 409,
+      ]);
 
       const finalProduct = await dataSource
         .getRepository(Product)
         .findOneByOrFail({ id: product.id });
       expect(finalProduct.stockQuantity).toBe(0);
       expect(
-        await dataSource
-          .getRepository(Order)
-          .count({ where: { userId: user.id } }),
+        await dataSource.getRepository(Order).count({
+          where: [{ userId: customerOne.id }, { userId: customerTwo.id }],
+        }),
       ).toBe(1);
     }, 30000);
   },
