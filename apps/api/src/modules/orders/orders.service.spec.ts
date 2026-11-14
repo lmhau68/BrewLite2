@@ -2,7 +2,7 @@ import { ConflictException } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { Repository } from 'typeorm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Order } from '../../database/entities/order.entity.js';
+import { Order, OrderStatus } from '../../database/entities/order.entity.js';
 import { OrderItem } from '../../database/entities/order-item.entity.js';
 import { Payment } from '../../database/entities/payment.entity.js';
 import { Product } from '../../database/entities/product.entity.js';
@@ -23,12 +23,17 @@ describe('OrdersService', () => {
   let topping: Topping;
   let orderRepository: {
     findOne: ReturnType<typeof vi.fn>;
+    findOneOrFail: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     save: ReturnType<typeof vi.fn>;
   };
   let itemRepository: {
     create: ReturnType<typeof vi.fn>;
+    find: ReturnType<typeof vi.fn>;
     save: ReturnType<typeof vi.fn>;
+  };
+  let paymentRepository: {
+    findOne: ReturnType<typeof vi.fn>;
   };
   let productQuery: {
     setLock: ReturnType<typeof vi.fn>;
@@ -74,6 +79,10 @@ describe('OrdersService', () => {
 
     orderRepository = {
       findOne: vi.fn(async () => savedOrder),
+      findOneOrFail: vi.fn(async () => {
+        if (!savedOrder) throw new Error('Expected a saved order');
+        return savedOrder;
+      }),
       create: vi.fn((input: Partial<Order>) =>
         Object.assign(new Order(), input, {
           id: '00000000-0000-4000-8000-000000000006',
@@ -91,7 +100,11 @@ describe('OrdersService', () => {
           id: '00000000-0000-4000-8000-000000000007',
         }),
       ),
+      find: vi.fn().mockResolvedValue([]),
       save: vi.fn(async (items: OrderItem[]) => items),
+    };
+    paymentRepository = {
+      findOne: vi.fn().mockResolvedValue(null),
     };
 
     const userRepository = {
@@ -107,20 +120,42 @@ describe('OrdersService', () => {
       save: vi.fn(async (entity: Topping) => entity),
     };
     const manager = {
-      getRepository: vi.fn((entity: typeof User | typeof Order | typeof Product | typeof Topping | typeof OrderItem | typeof Payment) => {
-        if (entity === User) return userRepository;
-        if (entity === Order) return orderRepository;
-        if (entity === Product) return productRepository;
-        if (entity === Topping) return toppingRepository;
-        if (entity === OrderItem) return itemRepository;
-        throw new Error('Unexpected repository');
-      }),
+      getRepository: vi.fn(
+        (
+          entity:
+            | typeof User
+            | typeof Order
+            | typeof Product
+            | typeof Topping
+            | typeof OrderItem
+            | typeof Payment,
+        ) => {
+          if (entity === User) return userRepository;
+          if (entity === Order) return orderRepository;
+          if (entity === Product) return productRepository;
+          if (entity === Topping) return toppingRepository;
+          if (entity === OrderItem) return itemRepository;
+          if (entity === Payment) return paymentRepository;
+          throw new Error('Unexpected repository');
+        },
+      ),
+      increment: vi.fn().mockResolvedValue(undefined),
     };
     transaction = vi.fn(
       (
-        _isolation: string,
-        callback: (transactionManager: EntityManager) => Promise<unknown>,
-      ) => callback(manager as unknown as EntityManager),
+        isolationOrCallback:
+          string | ((transactionManager: EntityManager) => Promise<unknown>),
+        callback?: (transactionManager: EntityManager) => Promise<unknown>,
+      ) => {
+        const transactionCallback =
+          typeof isolationOrCallback === 'function'
+            ? isolationOrCallback
+            : callback;
+        if (!transactionCallback) {
+          throw new Error('Expected a transaction callback');
+        }
+        return transactionCallback(manager as unknown as EntityManager);
+      },
     );
     const dataSource = { transaction };
 
@@ -213,5 +248,47 @@ describe('OrdersService', () => {
 
     expect(product.stockQuantity).toBe(3);
     expect(orderRepository.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows the valid order status transition sequence', async () => {
+    const orderId = '00000000-0000-4000-8000-000000000008';
+    savedOrder = Object.assign(new Order(), {
+      id: orderId,
+      status: OrderStatus.PAID,
+      totalAmount: 52000,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      items: [],
+      payments: [],
+    });
+
+    for (const status of [
+      OrderStatus.PREPARING,
+      OrderStatus.READY,
+      OrderStatus.COMPLETED,
+    ]) {
+      const updated = await service.updateStatus(orderId, status);
+      expect(updated.status).toBe(status);
+    }
+
+    expect(orderRepository.save).toHaveBeenCalledTimes(3);
+    expect(orderRepository.findOneOrFail).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects cancelling an order while it is being prepared', async () => {
+    const orderId = '00000000-0000-4000-8000-000000000008';
+    savedOrder = Object.assign(new Order(), {
+      id: orderId,
+      status: OrderStatus.PREPARING,
+      totalAmount: 52000,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      items: [],
+      payments: [],
+    });
+
+    await expect(
+      service.updateStatus(orderId, OrderStatus.CANCELLED),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(orderRepository.save).not.toHaveBeenCalled();
   });
 });

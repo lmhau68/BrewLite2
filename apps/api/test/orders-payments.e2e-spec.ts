@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import request from 'supertest';
@@ -164,7 +164,9 @@ describe.skipIf(!databaseUrl)(
       await request(app.getHttpServer())
         .post('/orders')
         .set('Idempotency-Key', randomUUID())
-        .send({ items: [{ productId: product.id, sizeId: sizeM.id, quantity: 1 }] })
+        .send({
+          items: [{ productId: product.id, sizeId: sizeM.id, quantity: 1 }],
+        })
         .expect(401);
 
       await request(app.getHttpServer())
@@ -259,6 +261,15 @@ describe.skipIf(!databaseUrl)(
     });
 
     it('processes simulated CARD payment via POST /payments, updates order to PAID in DB, and prevents duplicate payment (FR-09, FR-10)', async () => {
+      const menuRes = await request(app.getHttpServer())
+        .get('/products')
+        .expect(200);
+      expect(menuRes.body).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: product.id, isAvailable: true }),
+        ]),
+      );
+
       // Create a fresh order first
       const orderRes = await request(app.getHttpServer())
         .post('/orders')
@@ -327,6 +338,54 @@ describe.skipIf(!databaseUrl)(
         .set('Idempotency-Key', randomUUID())
         .send(paymentPayload)
         .expect(409);
+    });
+
+    it('marks a CARD payment as failed when the mock bank declines it', async () => {
+      const configService = app.get(ConfigService);
+      configService.set('MOCK_PAYMENT_OUTCOME', 'FAILED');
+
+      try {
+        const orderRes = await request(app.getHttpServer())
+          .post('/orders')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .set('Idempotency-Key', randomUUID())
+          .send({
+            items: [{ productId: product.id, sizeId: sizeM.id, quantity: 1 }],
+          })
+          .expect(201);
+        const orderId = (orderRes.body as { id: string }).id;
+
+        const payRes = await request(app.getHttpServer())
+          .post('/payments')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .set('Idempotency-Key', randomUUID())
+          .send({
+            orderId,
+            method: PaymentMethod.CARD,
+            bankCode: 'VCB',
+            accountNumber: '123456789012',
+          })
+          .expect(201);
+
+        const paymentBody = payRes.body as {
+          id: string;
+          status: PaymentStatus;
+          orderStatus: OrderStatus;
+        };
+        expect(paymentBody.status).toBe(PaymentStatus.FAILED);
+        expect(paymentBody.orderStatus).toBe(OrderStatus.PAYMENT_FAILED);
+
+        const dbOrder = await dataSource
+          .getRepository(Order)
+          .findOneByOrFail({ id: orderId });
+        const dbPayment = await dataSource
+          .getRepository(Payment)
+          .findOneByOrFail({ id: paymentBody.id });
+        expect(dbOrder.status).toBe(OrderStatus.PAYMENT_FAILED);
+        expect(dbPayment.status).toBe(PaymentStatus.FAILED);
+      } finally {
+        configService.set('MOCK_PAYMENT_OUTCOME', 'SUCCESS');
+      }
     });
 
     it('processes simulated WALLET QR payment and scan confirmation via HTTP (FR-09)', async () => {
