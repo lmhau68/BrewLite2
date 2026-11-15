@@ -2,11 +2,11 @@
 
 | Thông tin | Nội dung |
 |---|---|
-| Sơ đồ | Nguồn draw.io: [`deployment-diagram.drawio`](../diagrams/deployment-diagram.drawio) · ảnh xuất: `deployment-diagram.svg` / `.png` (draw.io: File → Export as) |
-| Nền tảng | **Local Docker Compose**, vận hành trên máy local của nhóm, không dùng nền tảng cloud (ADR-006) |
-| Đầu vào | `architecture.md` mục 3, 4, 6–10; ADR-002, 003, 004, 005, 006, 007 |
-| Trạng thái | Mô tả **thiết kế**. Mã nguồn, Dockerfile, Compose và workflow sẽ hiện thực ở Task 4 và 5; chỗ nào là dự kiến đều ghi rõ |
-| Ghi chú tên tệp | Tệp này mô tả sơ đồ triển khai. `docs/deployment.md` (hướng dẫn chạy, deploy, rollback theo mục 7.4 đề bài) là tệp khác, viết ở Task 5. |
+| Sơ đồ | Nguồn draw.io: [`deployment-diagram.drawio`](../diagrams/deployment-diagram.drawio) · ảnh xuất: `deployment-diagram.svg` / `.png` |
+| Nền tảng production | **Render** (cloud, vùng Singapore, gói Free) theo ADR-006. Local dùng Docker Compose |
+| Đầu vào | `architecture.md` mục 3, 4, 6–10; ADR-002, 003, 004, 005, 006, 007, 008 |
+| Đối chiếu với mã nguồn | `docker-compose.yml`, `apps/*/Dockerfile`, `apps/api/start-render.sh`, `.github/workflows/ci.yml`, `cd.yml`, `docs/deployment.md` |
+| Phạm vi | Sơ đồ mô tả **kiến trúc triển khai**. Hướng dẫn cấu hình, khởi tạo image lần đầu, rollback chi tiết nằm ở `docs/deployment.md` (Task 5.3) |
 
 ![Deployment diagram](../diagrams/deployment-diagram.svg)
 
@@ -14,122 +14,111 @@
 
 ## 1. Tổng quan
 
-BrewLite được triển khai dưới dạng **ba container** (`brewlite-web`, `brewlite-api`, `brewlite-db`) do Docker Compose quản lý trên một máy duy nhất (Local Host Machine). Hệ thống chia thành các phân vùng mạng với mức tin cậy khác nhau:
+Sơ đồ có **ba ranh giới** theo ADR-006: **Local** (máy lập trình viên), **CI/CD** (GitHub Actions + GHCR) và **Production** (Render).
 
-| Phân vùng | Mức tiếp xúc | Thành phần |
+Production gồm hai Render Web Service chạy image Docker lấy từ GHCR (`brewlite-web`, `brewlite-api`) và một Render PostgreSQL (`brewlite-db`). Cả ba đặt cùng workspace và cùng vùng Singapore. Render kết thúc TLS ở lớp edge nên người dùng chỉ thấy HTTPS 443. Không có CDN riêng cho Web Service.
+
+| Vùng | Mức tiếp xúc | Thành phần |
 |---|---|---|
-| **Z1 – Vùng client** | Ngoài hệ thống, không tin cậy | Thiết bị người dùng, trình duyệt/PWA (COMP-BROWSER) |
-| **Z2 – Vùng biên (tùy chọn)** | Cầu nối ra Internet khi cần HTTPS công khai | Tunnel / reverse proxy HTTPS |
-| **Z3 – Vùng host** | Máy chủ Docker, nơi cổng được publish | Docker Engine, `docker-compose.yml`, `.env`, cổng 3000 và 3001 |
-| **Z4 – Vùng mạng nội bộ Docker** | Tin cậy, chỉ container truy cập | Mạng bridge `brewlite-net`: web, api, Mock Payment |
-| **Z5 – Vùng dữ liệu** | Cô lập cao nhất | `brewlite-db`, volume `pgdata`, cổng 5432 |
-| **Z6 – Vùng CI/CD** | Ngoài máy host, chỉ nhận mã và image | GitHub (CI, CD, GHCR) |
+| **Z1 – Client** | Ngoài hệ thống, không tin cậy | Thiết bị người dùng, trình duyệt/PWA (COMP-BROWSER) |
+| **Z2 – Render Edge** | Công khai | Kết thúc TLS, HTTPS 443, địa chỉ `*.onrender.com` |
+| **Z3 – Render Web Service** | Công khai qua edge | `brewlite-web` (COMP-WEB), `brewlite-api` (COMP-API, có COMP-PAY) |
+| **Z4 – Mạng riêng Render** | Nội bộ | Kết nối `api` → `db` bằng Internal Database URL |
+| **Z5 – Dữ liệu** | Cô lập cao nhất | `brewlite-db` (COMP-DB) và managed storage 1 GB; Inbound IP rules để trống |
+| **Z6 – CI/CD** | Ngoài Render | GitHub Actions (COMP-CI, COMP-CD), GHCR (COMP-REG), GitHub Secrets/Variables |
+| **Z7 – Local** | Máy lập trình viên | Docker Compose: `db`, `migrate`, `api`, `web`, volume `pgdata` |
 
 ## 2. Bảng các luồng kết nối (khớp số trên sơ đồ)
 
-| Số | Từ → Đến | Giao thức / cổng | Phân vùng | Mục đích |
-|---|---|---|---|---|
-| [1] | Trình duyệt → `brewlite-web` | HTTP `:3000` | Z1 → Z3 | Tải giao diện Next.js, tài nguyên PWA |
-| [2] | Trình duyệt → `brewlite-api` | HTTP `:3001` + JWT, REST/JSON | Z1 → Z3 | Gọi nghiệp vụ: menu, đặt đơn, thanh toán |
-| [3] | `brewlite-web` → `brewlite-api` | HTTP `api:3001` | Z4 (nội bộ) | Gọi API từ phía server (SSR), nếu frontend dùng SSR |
-| [4] | `brewlite-api` → `brewlite-db` | TCP/IP `5432` | Z4 → Z5 | Truy vấn, transaction PostgreSQL |
-| [5] | `brewlite-api` → COMP-PAY | Gọi hàm nội bộ | Cùng tiến trình | Mock Payment qua interface `PaymentGateway` |
-| [6] | `brewlite-db` → volume `pgdata` | Mount thư mục dữ liệu | Z5 | Lưu bền vững khi khởi động lại container |
-| [7] | Trình duyệt → tunnel | HTTPS `443` | Z1 → Z2 | **Tùy chọn**: truy cập HTTPS công khai |
-| [8] | Tunnel → `brewlite-web` | HTTP `localhost:3000` | Z2 → Z3 | **Tùy chọn**: chuyển tiếp vào frontend |
-| [9] | CI → CD | Sự kiện push/tag | Z6 | Kích hoạt pipeline phát hành |
-| [10] | CD → GHCR | HTTPS `443` | Z6 | Đẩy image gắn tag SHA hoặc `vX.Y.Z` |
-| [11] | CD → `brewlite-api` | `GET /health` | Z6 → Z3 | Deploy và smoke test (cần self-hosted runner hoặc chạy tay) |
-| [12] | Host → GHCR | HTTPS `443` | Z3 → Z6 | `docker compose pull` kéo image về |
+| Số | Từ → Đến | Giao thức / cổng | Mục đích |
+|---|---|---|---|
+| [1] | Trình duyệt → `brewlite-web` | HTTPS 443 (`*.onrender.com`) | Tải giao diện Next.js, tài nguyên PWA |
+| [2] | Trình duyệt → `brewlite-api` | HTTPS 443 + JWT, REST/JSON | Gọi nghiệp vụ: menu, đặt đơn, thanh toán. Web **không** gọi API qua mạng riêng; URL API là URL HTTPS công khai, nhúng vào Web lúc build (`NEXT_PUBLIC_API_URL`) |
+| [3] | `brewlite-api` → `brewlite-db` | TCP 5432, Internal Database URL | Truy vấn, transaction; migration và seed lúc khởi động |
+| [4] | `brewlite-api` → COMP-PAY | Gọi hàm nội bộ | Mock Payment chạy cùng tiến trình API (ADR-004) |
+| [5] | `brewlite-db` → managed storage | Do Render quản lý | Lưu bền vững dữ liệu PostgreSQL (1 GB, không autoscale) |
+| [6] | Developer → COMP-CI | `git push` / Pull Request | CI chạy khi mở PR và khi push `main`/`dev` |
+| [7] | COMP-CI → COMP-CD | Sự kiện `workflow_run` | CD chỉ chạy khi CI của push lên `main` thành công; PR không kích hoạt CD |
+| [8] | COMP-CD → GHCR | HTTPS 443 | Đẩy image `ghcr.io/lmhau68/brewlite2-{api,web}` với tag `sha-<SHA>` và `latest` |
+| [9] | COMP-CD → Render (api, web) | HTTPS: Deploy Hook kèm `imgURL`; Render API | Yêu cầu Render chạy đúng image của commit đã kiểm tra. Render API dùng để chờ trạng thái deploy `live` và để rollback |
+| [10] | Render → GHCR | HTTPS 443 | Render pull image (nếu package private thì cấu hình registry credential trên Render) |
+| [11] | COMP-CD → Render (public URL) | HTTPS 443 | Smoke test: `GET /health` của API và `GET /` của Web |
+| [12] | Trình duyệt dev → Compose local | HTTP `:3000` (web), `:3001` (api) | Dev/test. Thiết bị khác máy host dùng IP LAN (`LAN_HOST`) |
 
-Hai mũi tên nét đứt xám không đánh số là cấu hình: `.env` → container (`env_file`) và `docker-compose.yml` → Docker Engine (`docker compose up`).
+Mũi tên xám nét đứt không đánh số: Environment Variables của Render được đưa vào dịch vụ `api`.
 
-## 3. Mô tả chi tiết từng phân vùng mạng
+## 3. Mô tả chi tiết từng vùng
 
-### Z1 – Vùng client (thiết bị người dùng)
+### Z1 – Client
 
-- **Thành phần:** trình duyệt Chrome/Firefox chạy ứng dụng Next.js mobile-first/PWA (COMP-BROWSER). Thiết bị có thể là điện thoại khách hoặc máy chấm điểm của giảng viên.
-- **Cơ chế:** trình duyệt nằm **ngoài** mạng Docker nên không phân giải được tên dịch vụ nội bộ (`web`, `api`, `db`). Nó chỉ tiếp cận được hệ thống qua địa chỉ và cổng mà host publish ([1], [2]) hoặc qua tunnel ([7]).
-- **Kiểm soát:** vùng này **không được tin cậy**. Mọi dữ liệu từ client (giá, tổng tiền, vai trò) đều bị API kiểm tra lại; xác thực bằng JWT ngắn hạn (tối đa 60 phút), phân quyền theo vai trò CUSTOMER/STAFF/MANAGER (ADR-005, NFR-03).
-- **Lưu ý khi truy cập:** `localhost` trên điện thoại chỉ chính điện thoại đó. Thiết bị khác máy host phải dùng địa chỉ mạng của máy host hoặc URL của tunnel.
+Trình duyệt Chrome/Firefox chạy Next.js mobile-first/PWA trên điện thoại hoặc máy chấm điểm. Vùng này không được tin cậy: mọi dữ liệu từ client (giá, tổng tiền, vai trò) đều được API kiểm tra lại; xác thực bằng JWT, phân quyền CUSTOMER/STAFF/MANAGER (ADR-005).
 
-### Z2 – Vùng biên: tunnel / reverse proxy HTTPS (tùy chọn)
+### Z2/Z3 – Render Edge và Web Service
 
-- **Mục đích:** đáp ứng yêu cầu HTTPS của đề bài (mục 7.4) khi demo hoặc nghiệm thu cần truy cập công khai. Mặc định hệ thống chạy qua cổng nội bộ `http://localhost:3000`.
-- **Cơ chế:** tunnel (Cloudflare Tunnel) hoặc reverse proxy đặt **ngoài mạng Docker**. Nó kết thúc TLS ở cổng 443 rồi chuyển tiếp HTTP vào `localhost:3000` ([7] → [8]). Với tunnel, kết nối do máy host chủ động tạo ra phía ngoài nên không cần mở cổng vào trên máy host.
-- **Kiểm soát:** chỉ trỏ vào frontend; **không bao giờ** trỏ vào `brewlite-db`. Phạm vi cuối cùng (có bọc thêm API hay không) do nhóm chốt ở Task 4–5.
-- **Trạng thái:** tùy chọn, chỉ bật khi cần. Khi không bật, vùng này không tồn tại.
+- **Edge:** kết thúc TLS và chuyển lưu lượng HTTPS 443 vào cổng `PORT` của container. Ứng dụng nghe `PORT` do Render cấp (mặc định 10000); cổng 3000/3001 chỉ dùng ở local.
+- **`brewlite-web`:** dịch vụ từ *Existing Image* `brewlite2-web`. Health Check Path `/`. `NEXT_PUBLIC_API_URL` được nhúng lúc build image (ADR-008), nên đổi URL API phải build lại image Web. Không có biến môi trường runtime bắt buộc.
+- **`brewlite-api`:** dịch vụ từ *Existing Image* `brewlite2-api`, Docker Command `/bin/sh /app/start-render.sh`, Health Check Path `/health`. Biến môi trường: `DATABASE_URL` (Internal URL), `JWT_SECRET`, `CORS_ORIGIN`, `DB_MIGRATIONS_RUN=false`, `MOCK_PAYMENT_OUTCOME`, `SEED_STAFF_*`.
+- **COMP-PAY:** module `payments` chạy cùng tiến trình API, không có cổng hay container riêng, không nhận dữ liệu thẻ thật.
+- Dịch vụ tạo thủ công từ image, **không dùng `render.yaml`**. Auto-deploy từ Git được tắt để mọi bản phát hành đi qua CD.
 
-### Z3 – Vùng host (Local Host Machine)
+### Z4/Z5 – Mạng riêng và dữ liệu
 
-- **Thành phần:** máy laptop phát triển/demo (COMP-PLATFORM = COMP-LOCAL), chạy Docker Engine, giữ `docker-compose.yml` (gốc repo) và `.env`.
-- **Cơ chế publish cổng:** cổng của container chỉ truy cập được từ bên ngoài khi được khai báo trong `ports` của Compose. Docker chuyển lưu lượng từ cổng host vào container tương ứng. Thiết kế publish hai cổng: `3000:3000` (web) và `3001:3001` (api). **`db` không có mục `ports`**, nên không có cổng 5432 nào trên host.
-- **Cấu hình và secret:** `.env` nằm trên host, **không commit**; `.env.example` trong repo chỉ có placeholder. Compose nạp biến vào từng container qua `env_file` (`DATABASE_URL`, `JWT_SECRET`, `POSTGRES_*` ...). Biến có tiền tố `NEXT_PUBLIC_` lộ ra trình duyệt nên tuyệt đối không đặt secret (ADR-007).
-- **Vận hành:** log ghi ra stdout dạng JSON và đọc bằng `docker compose logs`; health check khai báo trong Compose.
-- **Hạn chế:** máy host phải bật trong phiên nghiệm thu; không có tự phục hồi hay cân bằng tải (NFR-02 chỉ là mục tiêu demo).
+- Chỉ `api` kết nối `db` (luồng [3]) qua Internal Database URL. Danh sách Inbound IP rules của DB để trống nên không truy cập được từ Internet (NFR-04). Secret chứa chuỗi kết nối không đưa vào GitHub Actions.
+- PostgreSQL 16, managed storage 1 GB, không autoscale, không High Availability.
+- **Migration và seed** chạy khi `api` khởi động, không phải bước riêng của CD: `start-render.sh` chạy `node dist/database/prepare-production.js` rồi `exec node dist/main.js`. Script giữ advisory lock, chạy migration trong transaction, chỉ seed khi `products` và `toppings` đều rỗng, và dừng ngay nếu thất bại để API không mở cổng. Lý do: Render Free không có pre-deploy command (ADR-006).
+- `GET /health` chạy `SELECT 1`, trả 200 khi API và DB sẵn sàng, 503 khi mất DB.
 
-### Z4 – Vùng mạng nội bộ Docker (`brewlite-net`)
+### Z6 – CI/CD (GitHub)
 
-- **Thành phần:** container `brewlite-web` (Next.js, 3000), `brewlite-api` (NestJS, 3001, có module Mock Payment).
-- **Cơ chế:** Compose tạo một mạng **bridge** riêng. Các container trong mạng gọi nhau bằng **tên dịch vụ** thông qua DNS nội bộ của Docker (ví dụ `api:3001`), không cần biết địa chỉ IP. Lưu lượng [3] và [4] đi hoàn toàn trong mạng này và không đi qua cổng publish của host.
-- **Kiểm soát:**
-  - Chỉ `brewlite-api` mở kết nối tới `brewlite-db` (`DATABASE_URL`); web không truy cập DB trực tiếp.
-  - API áp dụng `ValidationPipe` (whitelist), `RolesGuard`, giới hạn đăng nhập (5 lần/60 giây → HTTP 429) và không trả stack trace hay chuỗi kết nối.
-- **Mock Payment (COMP-PAY):** là module chạy **cùng tiến trình** với API (ADR-004). Việc gọi là gọi hàm [5], không có kết nối mạng, không có cổng riêng, không nhận hay lưu dữ liệu thẻ thật.
+- **COMP-CI (`ci.yml`):** Install → Lint → Unit Test → Integration Test (Postgres service container) → Build cho API và Web; thêm job `docker` build hai image và khởi động thử theo cấu hình Render Free, kiểm tra `/health`, `/products` và chạy lại bước chuẩn bị DB.
+- **COMP-CD (`cd.yml`):** quality gate → kiểm tra cấu hình Render → build và push image → lưu deploy `live` hiện tại → gọi Deploy Hook cho api và web → chờ deploy `live` → smoke test → rollback bằng Render API nếu thất bại.
+- **COMP-REG (GHCR):** image gắn tag `sha-<SHA>` và `latest`; giữ lại image cũ để rollback.
+- **Secrets/Variables:** `RENDER_API_DEPLOY_HOOK_URL`, `RENDER_WEB_DEPLOY_HOOK_URL`, `RENDER_API_KEY` (Secrets); `RENDER_API_URL`, `RENDER_WEB_URL`, `RENDER_API_SERVICE_ID`, `RENDER_WEB_SERVICE_ID` (Variables). Không đưa `DATABASE_URL` hay `JWT_SECRET` production vào GitHub.
 
-### Z5 – Vùng dữ liệu (`brewlite-db` và volume)
+### Z7 – Local (Docker Compose)
 
-- **Thành phần:** PostgreSQL 16 (COMP-DB) cổng 5432 và named volume `pgdata`.
-- **Cơ chế cô lập:** cổng 5432 chỉ tồn tại **bên trong** `brewlite-net` ([4]). Vì Compose không publish cổng này, không thể kết nối tới DB từ máy khác hay từ Internet (NFR-04). Sơ đồ không vẽ bất kỳ đường nào từ DB ra ngoài.
-- **Bền vững dữ liệu:** thư mục dữ liệu của PostgreSQL được mount vào volume `pgdata` ([6]). Container có thể bị xóa hoặc khởi động lại mà dữ liệu vẫn còn (NFR-06).
-- **Tính toàn vẹn:** tạo đơn và trừ tồn kho chạy trong một transaction; migration chạy từ DB rỗng; seed idempotent (`architecture.md` mục 6).
-- **Health:** `pg_isready` kiểm tra DB sẵn sàng; `GET /health` của API chạy `SELECT 1` và trả 503 khi mất DB.
-- **Ghi chú vận hành (dự kiến):** nếu thành viên cần mở DB bằng công cụ ngoài, dùng file Compose override riêng chỉ bind `127.0.0.1`, không đưa vào Compose chính.
+Bốn container trong mạng bridge `brewlite-net`: `db` (postgres:16-alpine, volume `pgdata`, **không publish 5432**), `migrate` (chạy một lần: migration + seed), `api` (publish 3001), `web` (publish 3000). Thứ tự khởi động: `db` healthy → `migrate` hoàn tất → `api` healthy → `web`. Cùng Dockerfile với CI và Render. `.env` không commit; `JWT_SECRET` bắt buộc.
 
-### Z6 – Vùng CI/CD (GitHub)
+## 4. Luồng đặt đơn và thanh toán
 
-- **Thành phần:** COMP-CI (`ci.yml`: Install → Lint → Unit Test → Build, chặn merge nếu lỗi), COMP-CD (`cd.yml`: build image → push → deploy → migration → smoke test), COMP-REG (GHCR, lưu image gắn tag).
-- **Cơ chế:** vùng này **không chạy ứng dụng**. Nó nhận mã nguồn, kiểm tra chất lượng, đóng gói image rồi đẩy lên registry ([9], [10]). Máy host kéo image về bằng `docker compose pull` ([12]).
-- **Deploy về máy local:** runner do GitHub cung cấp không truy cập được máy local, nên bước deploy ([11]) dùng **self-hosted runner** hoặc chạy tay theo `docs/deployment.md` và ghi lại kết quả. Smoke test gọi `GET /health` và trang menu; nếu lỗi thì dừng pipeline.
-- **Rollback:** đổi biến tag image về bản đã biết hoạt động rồi `docker compose up -d`; giới hạn rollback dữ liệu nêu ở `docs/deployment.md`.
-- **Secret:** GitHub Secrets chỉ dùng cho workflow; không in ra log CI.
-
-## 4. Ví dụ luồng xử lý: đặt đơn và thanh toán
-
-1. Khách tải giao diện từ `brewlite-web` ([1]); trình duyệt gọi API ([2]) kèm JWT.
-2. `brewlite-api` xác thực JWT, kiểm tra dữ liệu, tính giá và tồn kho ở phía server.
-3. API mở transaction tới `brewlite-db` ([4]): tạo đơn, các dòng đơn, trừ tồn kho, rồi commit hoặc rollback toàn bộ.
-4. Khi thanh toán, API gọi COMP-PAY bằng hàm nội bộ ([5]) cùng khóa idempotency; kết quả được ghi vào DB ([4]) và trả về trình duyệt ([2]).
-5. Dữ liệu được ghi xuống volume `pgdata` ([6]), nên vẫn còn sau khi container khởi động lại.
+1. Khách tải giao diện từ `brewlite-web` ([1]); trình duyệt gọi `brewlite-api` bằng HTTPS kèm JWT ([2]).
+2. API xác thực JWT, kiểm tra dữ liệu, tính giá và tồn kho ở phía server.
+3. API mở transaction tới `brewlite-db` ([3]): tạo đơn, trừ tồn kho, commit hoặc rollback toàn bộ.
+4. Khi thanh toán, API gọi COMP-PAY bằng hàm nội bộ ([4]); kết quả ghi vào DB ([3]) và trả về trình duyệt ([2]).
 
 Chi tiết từng bước nằm ở `docs/diagrams/sequence-checkout.puml`.
 
-## 5. Khởi động và kiểm tra sức khỏe (thiết kế dự kiến)
+## 5. Biện pháp bảo mật theo vùng
 
-- `db` khởi động trước, `healthcheck` dùng `pg_isready`.
-- `api` chờ `db` sẵn sàng; migration chạy như bước riêng trước khi `api` nhận request; sau đó `GET /health` trả 200.
-- `web` khởi động sau cùng và phục vụ trang menu.
-- Smoke test của CD kiểm tra `GET /health` và trang menu sau mỗi lần triển khai.
-
-## 6. Các biện pháp bảo mật theo phân vùng
-
-| Phân vùng | Biện pháp | Yêu cầu |
+| Vùng | Biện pháp | Yêu cầu |
 |---|---|---|
-| Z1 | Không tin dữ liệu client; JWT ≤ 60 phút; RolesGuard | NFR-03, FR-06 |
-| Z2 | TLS tại biên (nếu bật); không trỏ vào DB | NFR-04 |
-| Z3 | `.env` không commit; chỉ publish cổng cần thiết | NFR-04, NFR-06 |
-| Z4 | Mạng bridge riêng; chỉ api truy cập DB; validate dữ liệu; không lộ stack trace | NFR-03, NFR-04, FR-14 |
-| Z5 | Không publish 5432; volume bền vững; transaction | NFR-04, NFR-06, FR-08 |
-| Z6 | GitHub Secrets; PR không merge khi CI lỗi | NFR-07, NFR-09 |
+| Z1 | Không tin dữ liệu client; JWT; RolesGuard | NFR-03, FR-06 |
+| Z2/Z3 | HTTPS tại edge; CORS giới hạn bằng `CORS_ORIGIN`; secret ở Render Environment Variables | NFR-03, NFR-04 |
+| Z4/Z5 | DB chỉ truy cập bằng Internal URL; Inbound IP rules rỗng; transaction | NFR-04, NFR-06, FR-08 |
+| Z6 | GitHub Secrets; PR lỗi không được merge; CD chỉ chạy khi CI `main` thành công | NFR-07, NFR-09 |
+| Z7 | `.env` không commit; chỉ publish 3000 và 3001, không publish 5432 | NFR-04, NFR-06 |
+
+## 6. Hạn chế của gói Free (theo ADR-006)
+
+- Web Service ngủ sau 15 phút không truy cập, khởi động lại khoảng 1 phút: ảnh hưởng NFR-02, cần đánh thức trước phiên nghiệm thu.
+- Mỗi workspace có 750 giờ instance miễn phí mỗi tháng.
+- PostgreSQL Free giới hạn 1 GB và hết hạn sau 30 ngày kể từ lúc tạo; cần ghi nhận ngày hết hạn và có migration/seed để dựng lại.
+- Rollback ứng dụng không khôi phục dữ liệu DB; ưu tiên migration tương thích ngược.
 
 ## 7. Truy vết sơ đồ ↔ kiến trúc ↔ mã nguồn
 
-| Thành phần | Mục `architecture.md` | ADR | Mã nguồn / tệp (dự kiến) |
+| Thành phần trên sơ đồ | Mục `architecture.md` | ADR | Mã nguồn / tệp |
 |---|---|---|---|
 | COMP-BROWSER | 3, 4 | ADR-008 | sinh ra từ `apps/web/` |
-| COMP-WEB | 3, 3.1, 4 | ADR-002, 008 | `apps/web/`, `apps/web/Dockerfile` |
-| COMP-API | 4, 5, 8 | ADR-002, 005, 007 | `apps/api/`, `apps/api/Dockerfile` |
-| COMP-PAY | 7 | ADR-004 | `apps/api/src/payments/gateway/` |
-| COMP-DB, volume `pgdata` | 6 | ADR-003 | `apps/api/migrations/`, `apps/api/seed/` |
-| COMP-PLATFORM, COMP-LOCAL | 4, 10 | ADR-006 | `docker-compose.yml`, `.env.example` |
-| COMP-CI, COMP-CD, COMP-REG | 10 | ADR-006 | `.github/workflows/ci.yml`, `cd.yml` |
+| COMP-WEB (`brewlite-web`) | 3, 3.1, 4 | ADR-002, 008 | `apps/web/`, `apps/web/Dockerfile` |
+| COMP-API (`brewlite-api`) | 4, 5, 8 | ADR-002, 005, 007 | `apps/api/`, `apps/api/Dockerfile`, `apps/api/src/modules/health/health.controller.ts` |
+| Khởi động API (migration + seed) | 6, 8 | ADR-003, 006 | `apps/api/start-render.sh`, `apps/api/src/database/prepare-production.ts` |
+| COMP-PAY | 7 | ADR-004 | `apps/api/src/modules/payments/` |
+| COMP-DB (`brewlite-db`) | 6 | ADR-003 | `apps/api/src/database/migrations/`, `apps/api/src/database/seed/` |
+| COMP-PLATFORM (Render) | 4, 10 | ADR-006 | `docs/deployment.md` mục 3 |
+| COMP-LOCAL | 4, 10 | ADR-006 | `docker-compose.yml`, `.env.example` |
+| COMP-CI | 10 | ADR-006 | `.github/workflows/ci.yml` |
+| COMP-CD | 10 | ADR-006 | `.github/workflows/cd.yml` |
+| COMP-REG (GHCR) | 10 | ADR-006 | image `ghcr.io/lmhau68/brewlite2-{api,web}` đẩy từ `cd.yml` |
+
+> **Cần đồng bộ:** bảng ở `architecture.md` mục 4 còn ghi đường dẫn dự kiến (`apps/api/src/payments/gateway/`, `apps/api/migrations/`, `apps/api/seed/`) và tên interface `PaymentGateway`, trong khi mã nguồn hiện tại nằm ở `apps/api/src/modules/payments/` và `apps/api/src/database/`. Mục này cũng ghi COMP-LOCAL chạy "db 5432"; thực tế `db` không publish cổng 5432 ra host.
