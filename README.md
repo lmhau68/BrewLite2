@@ -1,256 +1,280 @@
-# BrewLite
+# ☕ BrewLite - Hệ thống Đặt Đồ Uống Trực Tuyến
 
-Ứng dụng đặt đồ uống cho cửa hàng BrewLite. Luồng nghiệp vụ:
-**Xem menu → Chọn tùy chọn → Giỏ hàng → Đặt đơn → Thanh toán → Theo dõi đơn**.
+**BrewLite** là ứng dụng đặt đồ uống được thiết kế theo mô hình MVP (Minimum Viable Product) với giao diện tối ưu hóa cho trải nghiệm di động (Mobile-first). Dự án tập trung giải quyết bài toán vận hành khép kín cho cửa hàng cà phê, đảm bảo tính nhất quán dữ liệu từ khâu chọn món đến khi hoàn tất thanh toán.
 
-> **Trạng thái hiện tại — Sprint 2 (Task 5.1).** Ứng dụng có luồng từ xem menu,
-> chọn size/topping, giỏ hàng, đăng nhập, đặt đơn đến thanh toán mô phỏng và
-> theo dõi/cập nhật trạng thái đơn.
+**🔄 Luồng nghiệp vụ cốt lõi:**
+`Xem menu` ➔ `Chọn tùy chọn (Size/Topping)` ➔ `Giỏ hàng` ➔ `Đặt đơn` ➔ `Thanh toán (Mô phỏng Ví/Thẻ)` ➔ `Theo dõi trạng thái đơn`
 
-## Công nghệ
+---
 
-| Thành phần | Công nghệ | Thư mục |
-|---|---|---|
-| Frontend | Next.js 16 (App Router), TypeScript | `apps/web` |
-| Backend | NestJS 12, TypeORM 0.3 | `apps/api` |
-| Cơ sở dữ liệu | PostgreSQL 16 | `apps/api/migrations`, `apps/api/seed` |
-| Đóng gói | Docker, Docker Compose | `Dockerfile`, `docker-compose.yml` |
+## 🚀 Liên kết Hệ thống (Production)
 
-Kiến trúc chi tiết: [`docs/architecture/architecture.md`](docs/architecture/architecture.md).
-Yêu cầu chức năng/phi chức năng: [`docs/requirements/srs.md`](docs/requirements/srs.md).
+Hệ thống đã được thiết lập quy trình CI/CD tự động và triển khai thực tế trên môi trường đám mây. Giảng viên và người dùng có thể trải nghiệm trực tiếp thông qua các liên kết dưới đây:
 
-## Chạy bằng Docker Compose (khuyến nghị)
+*   **🌐 Ứng dụng khách hàng (Frontend):** https://brewlite-web-it8r.onrender.com/
+*   **⚙️ Backend API:** https://brewlite-api-7lrv.onrender.com/products
+*   **🩺 Trạng thái hệ thống (Health Check):** https://brewlite-api-7lrv.onrender.com/health
+*   **🎬 Video Demo End-to-End:** https://drive.google.com/file/d/1-AcWuSa6Wunitsy0PQdm1sVDx2k6svJY/view?usp=sharing
 
-Yêu cầu: Docker và Docker Compose.
+> **⚠️ Lưu ý vận hành:** Hệ thống backend đang chạy trên nền tảng đám mây gói miễn phí (Free Tier). Nếu không có yêu cầu nào trong vòng 15 phút, máy chủ sẽ tự động tạm ngưng (spin-down). Lần truy cập đầu tiên sau khoảng thời gian này có thể mất từ 30 - 50 giây để khởi động lại dịch vụ. Các thao tác sau đó sẽ diễn ra với tốc độ bình thường.
 
-```bash
+## 🛠 Ngăn xếp Công nghệ (Technology Stack)
+
+Hệ thống BrewLite được phát triển dựa trên nguyên lý thiết kế phân lớp (Layered Architecture), tách biệt hoàn toàn ranh giới giữa giao diện người dùng, logic xử lý nghiệp vụ và tầng lưu trữ dữ liệu để đảm bảo khả năng mở rộng (Scalability) và dễ dàng bảo trì.
+
+### 1. Frontend (Tương tác người dùng)
+- **Framework:** Next.js 16 (App Router)
+- **Ngôn ngữ:** TypeScript
+- **Đặc điểm:** Xây dựng theo phương pháp Mobile-first và kiến trúc PWA (Progressive Web App). Giao tiếp với Backend thông qua các lệnh gọi API RESTful (JSON) qua giao thức HTTP/HTTPS.
+
+### 2. Backend (Xử lý nghiệp vụ cốt lõi)
+- **Framework:** NestJS 12
+- **Ngôn ngữ:** TypeScript
+- **ORM (Object-Relational Mapping):** TypeORM 0.3
+- **Đặc điểm:** Thiết kế theo kiến trúc Modular Monolith. Kiểm soát nghiêm ngặt các giao dịch cơ sở dữ liệu (Database Transactions) và tính lũy đẳng (Idempotency) để xử lý an toàn các truy cập đồng thời (Concurrency/Race Condition) trong luồng thanh toán và trừ tồn kho.
+
+### 3. Cơ sở dữ liệu (Database)
+- **Hệ quản trị:** PostgreSQL 16
+- **Khởi tạo & Quản lý:** Tự động hóa quá trình tái tạo cấu trúc (Migration) và nạp dữ liệu mẫu (Seed). Kịch bản Seed được thiết kế với tính chất Idempotent (có thể chạy lại nhiều lần mà không gây trùng lặp dữ liệu), đảm bảo tính nhất quán trên mọi môi trường triển khai.
+
+### 4. Vận hành, Mạng & CI/CD (DevOps & Infrastructure)
+- **Containerization & Network Isolation:** Docker và Docker Compose. Toàn bộ các dịch vụ (Web, API, DB) được đóng gói thành các container độc lập và cô lập trong một mạng nội bộ ảo (Docker Bridge Network). Cơ sở dữ liệu được ẩn hoàn toàn khỏi mạng public để đảm bảo bảo mật.
+- **Tích hợp liên tục (CI):** GitHub Actions. Pipeline tự động kích hoạt các bước kiểm định (Quality Gate): `Install` ➔ `Lint` ➔ `Unit/Integration/E2E Test` ➔ `Build` mỗi khi có Pull Request.
+- **Phân phối liên tục (CD):** 
+  - **Registry:** GitHub Container Registry (GHCR) lưu trữ các Docker Image được gắn tag theo mã SHA.
+  - **Cloud Hosting:** Render Cloud. Hệ thống sử dụng Webhook để tự động kéo Image mới nhất về, cấu hình cổng mạng và tự động cấp phát chứng chỉ SSL/TLS để cung cấp URL truy cập qua giao thức HTTPS bảo mật.
+
+  # 💻 Khởi chạy cục bộ (Local Development)
+
+Dự án **BrewLite** hỗ trợ hai phương pháp khởi chạy trong môi trường
+local. Để bảo đảm tính nhất quán của môi trường phát triển và giảm thiểu
+tối đa các lỗi xung đột phần mềm, nhóm **khuyến nghị sử dụng Docker
+Compose**.
+
+## Phương pháp 1: Chạy bằng Docker Compose (Khuyến nghị)
+
+Phương pháp này sử dụng **Containerization** để tự động hóa toàn bộ quá
+trình thiết lập môi trường, bao gồm khởi tạo Database và nạp dữ liệu mẫu
+(Seed) một cách độc lập.
+
+### Yêu cầu môi trường
+
+-   Đã cài đặt **Docker**.
+-   Đã cài đặt **Docker Compose**.
+
+### Bước 1: Thiết lập biến môi trường
+
+Sao chép file cấu hình mẫu để hệ thống nhận diện các biến môi trường mặc
+định:
+
+``` bash
 cp .env.example .env
+```
+
+### Bước 2: Khởi động hệ thống
+
+Lưu ý: đảm bảo phần mềm Docker Desktop đang mở chạy nền trước khi thực thi lệnh.
+
+Chạy lệnh sau tại thư mục gốc của dự án để Docker tự động tải image,
+build và chạy các container ở chế độ nền (*detached mode*):
+
+``` bash
 docker compose up -d --build
 ```
 
-Giỏ hàng được lưu trong trình duyệt theo tài khoản, không nằm trong Docker
-volume. Đóng/rebuild container không xóa giỏ; đăng xuất sẽ ẩn giỏ tài khoản và
-chuyển sang giỏ khách rỗng, đăng nhập lại cùng tài khoản trên cùng trình duyệt
-sẽ khôi phục. Xóa dữ liệu trình duyệt hoặc dùng thiết bị/trình duyệt khác sẽ
-không khôi phục giỏ này.
+### Bước 3: Truy cập hệ thống
 
-Sau đó truy cập:
+Sau khi lệnh chạy hoàn tất và các dịch vụ báo trạng thái `Started`, bạn
+có thể truy cập hệ thống thông qua các cổng đã được ánh xạ (*Port
+Mapping*) ra `localhost`:
 
-| Dịch vụ | URL |
-|---|---|
-| Frontend (menu) | http://localhost:3000 |
-| API | http://localhost:3001 |
-| Health check | http://localhost:3001/health |
+  -----------------------------------------------------------------------
+  Thành phần                          Đường dẫn truy cập
+  ----------------------------------- -----------------------------------
+  Frontend (Giao diện Khách hàng)     <http://localhost:3000>
 
-Trước khi khởi động, thay `JWT_SECRET` trong `.env` bằng một chuỗi ngẫu nhiên
-riêng tư dài tối thiểu 32 ký tự. `MOCK_PAYMENT_OUTCOME` nhận `SUCCESS`,
-`FAILED` hoặc `TIMEOUT` để thử các kết quả thanh toán giả lập. Thanh toán ngân
-hàng/QR chỉ phục vụ demo; không kết nối ngân hàng và không xử lý tiền thật.
+  Backend API (NestJS)                <http://localhost:3001>
 
-### Quét QR demo bằng điện thoại
+  API Health Check (Kiểm tra trạng    <http://localhost:3001/health>
+  thái)                               
+  -----------------------------------------------------------------------
 
-QR thanh toán là một liên kết demo. Điện thoại dùng camera quét mã và mở liên
-kết; máy chủ xác nhận outcome mô phỏng, rồi trang thanh toán trên máy tính tự
-cập nhật trạng thái. Đây **không phải** QR chuyển khoản và không thể kiểm tra
-giao dịch ngân hàng thật.
+> **Lưu ý:** Quá trình tạo cấu trúc bảng (*Migration*) và nạp dữ liệu
+> mẫu (*Seed*) sẽ được thực thi tự động ngay khi container API khởi động
+> thành công.
 
-Để điện thoại mở được liên kết, máy tính và điện thoại cần cùng mạng Wi-Fi:
+### Các lệnh Docker hữu ích
 
-1. Với cấu hình mặc định, mở web trên máy tính tại
-   `http://192.168.1.12:3000`. Nếu mở bằng `localhost`, QR tự thay địa chỉ đó
-   bằng `192.168.1.12`; không cần nhập IP trong giao diện.
-2. Khi mở trang thanh toán của đơn mới, giao dịch QR `PENDING` và mã QR được
-   tạo tự động. Dùng camera điện thoại quét rồi mở liên kết; chỉ lúc đó kết quả
-   mô phỏng mới được xác nhận. Trang máy tính tự cập nhật và chỉ xóa món khỏi
-   giỏ khi thanh toán thành công.
-3. Nếu muốn dùng thẻ thay vì QR đang chờ, chọn **Hủy QR và chọn thẻ**. Việc
-   quét QR đã hủy không thể xác nhận thanh toán.
-4. Nếu IP mạng nội bộ thay đổi, đặt `LAN_HOST` và `NEXT_PUBLIC_LAN_HOST` trong
-   `.env` thành IP mới rồi chạy lại `docker compose up -d --build`. Cho phép
-   cổng 3000/3001 qua Windows Firewall trên mạng Private.
+**Xem log hệ thống để debug:**
 
-Nếu không kết nối được, kiểm tra hai thiết bị cùng Wi-Fi và Windows Firewall
-cho phép cổng 3000/3001 trong mạng riêng.
-
-### Kiểm thử các kết quả thanh toán mô phỏng
-
-Đặt `MOCK_PAYMENT_OUTCOME` trong `.env` rồi khởi động lại API trước mỗi lần đổi
-giá trị. Dùng một đơn mới đang chờ thanh toán và một `Idempotency-Key` UUID mới
-cho mỗi lần POST. QR luôn tạo giao dịch `PENDING`; giao dịch được xác nhận khi
-điện thoại mở URL mã QR. Việc tra cứu trạng thái chỉ đọc.
-
-Để thử lỗi, đổi giá trị trong `.env` thành `MOCK_PAYMENT_OUTCOME=FAILED`, rồi
-khởi động lại API. Với Docker Compose, chạy:
-
-```bash
-docker compose up -d --force-recreate api
+``` bash
+docker compose logs -f
 ```
 
-Chạy local thì khởi động lại tiến trình API.
+**Dừng và gỡ bỏ các container (vẫn giữ lại dữ liệu trong volume):**
 
-```bash
-# Tạo giao dịch QR (phản hồi luôn là PENDING)
-curl -X POST http://localhost:3001/payments \
-  -H "Authorization: Bearer <JWT>" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: 00000000-0000-4000-8000-000000000003" \
-  -d '{"orderId":"<ORDER_UUID>","method":"WALLET"}'
-
-# Điện thoại sẽ gọi endpoint này khi mở link QR (không cần JWT; cần token trong QR)
-curl -X POST http://localhost:3001/payments/<PAYMENT_UUID>/mock-scan \
-  -H "Content-Type: application/json" \
-  -d '{"scanToken":"<QR_SCAN_TOKEN>"}'
-```
-
-| `MOCK_PAYMENT_OUTCOME` | Kết quả mong đợi |
-|---|---|
-| `SUCCESS` | Điện thoại mở link QR: giao dịch thành `SUCCESS`, đơn thành `PAID`; giao diện máy tính cập nhật giỏ hàng. |
-| `FAILED` | Điện thoại mở link QR: giao dịch thành `FAILED`, đơn thành `PAYMENT_FAILED`; có thể tạo giao dịch mới với key khác. |
-| `TIMEOUT` | Link QR báo chưa xác định và giữ `PENDING`; `GET /payments/<PAYMENT_UUID>` chỉ đọc. Có thể đổi outcome rồi quét/mở lại link. Với thẻ đang `PENDING`, giao diện có nút mô phỏng nhận kết quả ngân hàng riêng. |
-
-Để thử từng outcome độc lập, nên dùng đơn mới. Có thể thử lại đơn `FAILED` với
-key mới; với `TIMEOUT`, không tạo POST giao dịch mới. Gửi lại cùng key và cùng
-nội dung sẽ trả về cùng giao dịch; dùng lại key với nội dung khác sẽ bị từ chối.
-
-> Đây là mô phỏng nội bộ: mở liên kết QR đánh dấu kết quả giả lập theo
-> `MOCK_PAYMENT_OUTCOME`, không kết nối ngân hàng/cổng thanh toán và không nhận
-> tiền thật. Muốn xác minh giao dịch thật cần tích hợp nhà cung cấp.
-
-Migration và seed được chạy tự động trước khi container `api` khởi động.
-Để dùng màn hình nhân viên trong demo, điền `SEED_STAFF_EMAIL` và
-`SEED_STAFF_PASSWORD` trong `.env` trước lần chạy đầu. Seed tạo tài khoản
-`STAFF` mà không dùng mật khẩu mặc định; đặt các biến này trước khi áp dụng
-migration/seed trên môi trường mới.
-Kiểm tra dữ liệu mẫu:
-
-```bash
-curl http://localhost:3001/products
-```
-
-Dừng và xoá container (giữ dữ liệu trong volume `pgdata`):
-
-```bash
+``` bash
 docker compose down
-# Xoá cả dữ liệu:
+```
+
+**Dừng và xóa sạch toàn bộ container cùng dữ liệu trong volume:**
+
+``` bash
 docker compose down -v
 ```
 
-## Chạy local không dùng Docker
+> **Cảnh báo:** Lệnh `docker compose down -v` sẽ xóa các volume, đồng
+> nghĩa với việc dữ liệu được lưu trong các volume đó cũng bị xóa.
 
-Cần Node.js 20+ và PostgreSQL 16 đang chạy.
+------------------------------------------------------------------------
 
-```bash
-# 1. Backend
+## Phương pháp 2: Chạy thủ công (Dành cho Coder)
+
+Phương pháp này đòi hỏi cấu hình môi trường phức tạp hơn, phù hợp với
+lập trình viên muốn can thiệp trực tiếp vào mã nguồn.
+
+### Yêu cầu môi trường
+
+-   **Node.js** phiên bản **20 trở lên**.
+-   **PostgreSQL** phiên bản **16** đang hoạt động trên máy tính.
+
+### Bước 1: Khởi chạy Backend API
+
+Mở một terminal mới và chạy lần lượt các lệnh sau:
+
+``` bash
 cd apps/api
-npm install
-cp ../../.env.example .env          # DATABASE_URL phải trỏ tới localhost nếu chạy ngoài Compose
-# đặt JWT_SECRET riêng tư; tùy chọn đặt SEED_STAFF_EMAIL/SEED_STAFF_PASSWORD
-npm run migration:run               # tạo schema
-npm run seed                        # nạp dữ liệu mẫu (idempotent)
-npm run start:dev                   # http://localhost:3001
 
-# 2. Frontend (terminal khác)
+npm install
+
+cp ../../.env.example .env
+```
+
+> **Lưu ý:** Cần chỉnh sửa các biến `POSTGRES_*` trong file `.env` nếu
+> Database local của bạn không sử dụng cổng mặc định.
+
+Tiếp tục chạy các lệnh sau:
+
+``` bash
+# Chạy script tạo cấu trúc bảng (Schema)
+npm run migration:run
+
+# Nạp dữ liệu mẫu (Idempotent - an toàn khi chạy nhiều lần)
+npm run seed
+
+# Khởi động server API ở chế độ Watch
+npm run start:dev
+```
+
+Backend API sẽ chạy tại:
+
+<http://localhost:3001>
+
+### Bước 2: Khởi chạy Frontend Web
+
+Mở một terminal khác và chạy lần lượt các lệnh sau:
+
+``` bash
 cd apps/web
+
 npm install
-npm run dev                         # http://localhost:3000
+
+npm run dev
 ```
 
-## Script có sẵn
+Frontend Web sẽ chạy tại:
 
-Chạy từ thư mục `apps/api`:
+<http://localhost:3000>
 
-| Script | Mô tả |
-|---|---|
-| `npm run start:dev` | Chạy API ở chế độ watch |
-| `npm run build` | Build ra `dist/` |
-| `npm run migration:run` | Chạy migration (tạo schema từ DB rỗng) |
-| `npm run seed` | Nạp dữ liệu mẫu, idempotent |
-| `npm run lint` | Chạy oxlint |
-| `npm test` | Chạy unit test |
-| `npm run test:cov` | Unit test kèm coverage |
-| `npm run test:integration` | Test PostgreSQL thật (cần `TEST_DATABASE_URL`) |
+## 🧪 Hướng dẫn Kiểm thử (Testing Guide)
 
-Test tích hợp tạo schema ngẫu nhiên riêng, chạy migration, tranh chấp hai yêu
-cầu đặt cùng sản phẩm chỉ còn một đơn vị tồn kho, rồi xóa schema đó. Dùng
-PostgreSQL test riêng và tài khoản có quyền tạo schema; không trỏ tới production.
-Ví dụ PowerShell:
+Dự án BrewLite áp dụng phương pháp Kiểm định và Xác minh (V&V - Verification and Validation)[cite: 292] thông qua hệ thống kiểm thử tự động (Automated Test Framework) được chia thành ba cấp độ cốt lõi, tuân thủ nguyên tắc "Test-first" trong quy trình Agile[cite: 255]:
 
-```powershell
-$env:TEST_DATABASE_URL = 'postgres://<user>:<password>@localhost:5432/<test_database>'
-npm run test:integration
-Remove-Item Env:TEST_DATABASE_URL
-```
+### 1. Kiểm thử Đơn vị (Unit Test)
+*   **Mục tiêu:** Kiểm tra độc lập logic của từng hàm, từng component (ví dụ: công thức tính tổng tiền, logic chuyển trạng thái đơn hàng)[cite: 293].
+*   **Thực thi:**
+    ```bash
+    # Chạy từ thư mục gốc hoặc thư mục apps/api, apps/web
+    npm test
+    ```
 
-Chạy từ thư mục `apps/web`:
+### 2. Kiểm thử Tích hợp (Integration Test) & Kiểm thử Toàn trình (End-to-End Test)
+*   **Mục tiêu:**
+    *   **Integration Test:** Kiểm tra sự giao tiếp giữa các thành phần hệ thống (API và Database), đặc biệt là các kịch bản hóc búa như **Race Condition** (kẹt tồn kho) và tính **Idempotency** (chống trừ tiền đúp).
+    *   **E2E Test:** Mô phỏng kịch bản người dùng cuối (End-user) từ lúc xem menu, đặt hàng đến khi thanh toán thành công (Sử dụng Playwright cho Frontend)[cite: 103].
+*   **Môi trường (Quan trọng):** Các bài test này yêu cầu sự cô lập môi trường (Environment Isolation) để không làm hỏng dữ liệu thật. Do đó, cần cấu hình biến `TEST_DATABASE_URL` trỏ vào một cơ sở dữ liệu PostgreSQL trống hoặc cơ sở dữ liệu dành riêng cho kiểm thử.
+*   **Thực thi (tại `apps/api`):**
+    ```bash
+    # Thiết lập biến môi trường (Ví dụ trên PowerShell/Terminal)
+    # (Thay thế URL tương ứng với môi trường của bạn)
+    $env:TEST_DATABASE_URL="postgres://brewlite:brewlite@127.0.0.1:5432/brewlite_test"; 
+    
+    # Chạy kiểm thử
+    npm run test:integration
+    npm run test:e2e
+    ```
 
-| Script | Mô tả |
-|---|---|
-| `npm run dev` | Dev server |
-| `npm run build` | Build production |
-| `npm start` | Chạy production build |
+### 3. Kiểm tra Tự động hóa trên CI (Continuous Integration - Task 4.4)
+*   Toàn bộ các bài kiểm thử (Unit, Integration, E2E) đều được tích hợp vào pipeline GitHub Actions (`.github/workflows/ci.yml`)[cite: 103, 105].
+*   Mọi Pull Request (PR) đều phải vượt qua 100% các bài test này (Quality Gate) trước khi được Merge vào nhánh `main` hoặc `dev`[cite: 105].
 
-## API
+## ⚙️ Hướng dẫn CI/CD & Deploy 
 
-| Method | Đường dẫn | Mô tả |
-|---|---|---|
-| GET | `/products` | Danh sách món. Query `category` lọc theo danh mục, `includeUnavailable=true` gồm món hết hàng. |
-| GET | `/products/:id` | Chi tiết món kèm size và topping hỗ trợ. |
-| GET | `/health` | Health check API + DB (200 sẵn sàng, 503 khi mất DB). |
-| POST | `/auth/register`, `/auth/login` | Đăng ký khách hàng và đăng nhập, trả JWT. |
-| GET | `/auth/me` | Tài khoản hiện tại (JWT). |
-| POST / GET | `/orders` | Tạo đơn idempotent và liệt kê đơn của tài khoản (JWT). |
-| GET | `/orders/:orderId` | Chi tiết đơn thuộc tài khoản (JWT). |
-| POST / GET | `/payments` | Tạo giao dịch mô phỏng / tra cứu giao dịch (JWT). |
-| POST | `/payments/:paymentId/mock-scan` | Xác nhận link QR demo bằng token một lần từ mã QR. |
-| POST | `/payments/:paymentId/mock-cancel` | Hủy giao dịch QR đang chờ để đổi sang thẻ (JWT). |
-| POST | `/payments/:paymentId/mock-result` | Mô phỏng kết quả thẻ/ngân hàng khi giao dịch timeout (JWT, demo). |
-| GET | `/staff/orders` | Danh sách đơn cho nhân viên/quản lý (JWT, phân quyền). |
-| PATCH | `/staff/orders/:orderId/status` | Cập nhật trạng thái đơn hợp lệ (JWT, phân quyền). |
+Dự án áp dụng quy trình Tích hợp và Phân phối liên tục (CI/CD) thông qua **GitHub Actions** để tự động hóa hoàn toàn khâu kiểm định và triển khai lên môi trường Cloud, tuân thủ nguyên tắc "Không triển khai thủ công".
 
-Giá trả về là **số nguyên VND** theo BR-01.
+### 1. Luồng Tích hợp Liên tục (Continuous Integration - CI)
+Mỗi khi có Pull Request (PR) hoặc commit mới đẩy lên nhánh `main` / `dev`, hệ thống tự động chạy Pipeline `.github/workflows/ci.yml` với các bước kiểm duyệt nghiêm ngặt (Quality Gate):
+*   **Install:** Tự động cài đặt các dependency.
+*   **Lint:** Kiểm tra chuẩn mực định dạng code (oxlint & Prettier).
+*   **Unit & Integration Test:** Kích hoạt môi trường Database ảo trong Docker để chạy các bài test Backend. PR sẽ bị chặn (Block) nếu có bất kỳ bài test nào báo lỗi đỏ.
+*   **Build:** Xác nhận mã nguồn biên dịch thành công.
 
-### Giao diện
+### 2. Luồng Phân phối Liên tục (Continuous Deployment - CD)
+Khi một PR được duyệt và **Merge vào nhánh `main`**, hệ thống tự động kích hoạt Pipeline `.github/workflows/cd.yml`:
+1.  **Build & Push Image:** Đóng gói ứng dụng thành Docker Image, gắn tag theo mã commit (SHA) và đẩy lên **GitHub Container Registry (GHCR)**.
+2.  **Deploy to Render:** GitHub gửi tín hiệu Webhook (Deploy Hook) sang nền tảng Render Cloud.
+3.  **Tự động cập nhật:** Render tự động tải Image mới nhất từ GHCR về, chạy script Migration & Seed an toàn (không làm mất dữ liệu cũ), và khởi động lại Web Service.
 
-| Route | Mô tả |
-|---|---|
-| `/` | Menu: danh sách món, lọc theo danh mục, ảnh minh hoạ từng món. |
-| `/products/:id` | Chi tiết món: ảnh, mô tả, giá, **kích thước (S/M/L kèm phụ thu)** và **topping hỗ trợ** (FR-02). |
-| `/cart` | Sửa giỏ hàng và tạo đơn. |
-| `/login`, `/register` | Đăng nhập và đăng ký khách hàng. |
-| `/checkout/payment/:orderId` | Thanh toán mô phỏng; quét link QR bằng điện thoại hoặc dùng thẻ giả lập. |
-| `/mock-payment/scan` | Đích đến của link QR demo; tự gửi kết quả mô phỏng về API. |
-| `/orders`, `/orders/:orderId` | Lịch sử, chi tiết và trạng thái đơn của khách. |
-| `/staff/orders` | Nhân viên/quản lý xem đơn và cập nhật trạng thái. |
+### 3. Kiểm tra Sức khỏe & Kịch bản Rollback (Smoke Test & Rollback)
+Để đảm bảo an toàn tuyệt đối khi đưa phiên bản mới lên Production:
+*   **Smoke Test:** Ngay sau khi Deploy, Pipeline sẽ tự động gọi vào endpoint `GET /health` của API. Nếu API trả về mã HTTP 200 (OK), bản cập nhật được xác nhận thành công.
+*   **Tự động Rollback:** Nếu Smoke Test thất bại (ví dụ: API trả về 503 do lỗi kết nối Database), Pipeline sẽ tự động gửi lệnh thông qua Render API để **lùi phiên bản (Rollback)** về bản Deploy hoạt động ổn định trước đó.
 
-Ảnh món nằm ở `apps/web/public/images/menu/` và được ánh xạ qua trường
-`imageUrl` của sản phẩm trong database.
+> **💡 Hướng dẫn Rollback thủ công:**
+> Trong trường hợp hệ thống gặp sự cố nghiêm trọng không thể tự phục hồi, người quản trị có thể rollback bằng cách:
+> 1. Đăng nhập vào Dashboard của Render.
+> 2. Chọn dịch vụ Web Service tương ứng (Frontend hoặc API).
+> 3. Chuyển sang tab **Deploys**.
+> 4. Tìm bản cập nhật đang hoạt động ổn định ở quá khứ, nhấn nút **Rollback to this deploy**.
 
-## Cấu trúc thư mục
+## 📂 Cấu trúc thư mục (Project Structure)
 
-```
+Dự án BrewLite được tổ chức theo kiến trúc **Monorepo** (ADR-001), giúp quản lý tập trung toàn bộ mã nguồn Frontend, Backend, tài liệu và cấu hình CI/CD trong một Repository duy nhất. Cấu trúc này tối ưu hóa việc chia sẻ mã, quản lý phiên bản và đồng bộ hóa quy trình triển khai.
+
+```text
 brewlite/
-├── apps/
-│   ├── api/                    # NestJS
-│   │   ├── src/
-│   │   │   ├── config/         # Cấu hình kết nối DB
-│   │   │   ├── database/       # Entity, migration, seed
-│   │   │   └── modules/        # products, health, auth, orders, payments
-│   │   └── Dockerfile
-│   └── web/                    # Next.js
-│       ├── app/                # App Router (menu + /products/[id])
-│       ├── components/         # Component giao diện menu
-│       ├── public/images/menu/ # Ảnh từng món
-│       ├── lib/                # API client, kiểu dữ liệu
-│       └── Dockerfile
-├── docs/                       # Yêu cầu, sơ đồ, kiến trúc
-├── .github/workflows/          # CI/CD
-├── docker-compose.yml
-└── .env.example
-```
-
-## Quy ước
-
-- Commit theo [Conventional Commits](CONTRIBUTING.md): `feat(api): [#BL-05] ...`.
-- Nhánh: `feature/<tên-chức-năng>` → `dev` → `main`.
-- PR phải qua CI (lint, test, build) và có ít nhất 1 người approve.
-- Không commit secret; `.env.example` chỉ chứa placeholder.
+├── apps/                       # Chứa mã nguồn các ứng dụng cốt lõi
+│   ├── api/                    # ⚙️ Backend NestJS (REST API)
+│   │   ├── src/                
+│   │   │   ├── config/         # Cấu hình kết nối Cơ sở dữ liệu (PostgreSQL)
+│   │   │   ├── database/       # Thực thể (Entities), Migration và Seed data
+│   │   │   └── modules/        # Các module nghiệp vụ (auth, products, orders, payments, health)
+│   │   └── Dockerfile          # Cấu hình đóng gói Docker cho API
+│   └── web/                    # 🌐 Frontend Next.js (App Router, PWA)
+│       ├── app/                # Các trang (Pages) và Layout
+│       ├── components/         # Các thành phần giao diện (UI Components) tái sử dụng
+│       ├── lib/                # API client, xử lý dữ liệu, định dạng
+│       ├── public/             # Tài nguyên tĩnh (Hình ảnh, icon, manifest PWA)
+│       └── Dockerfile          # Cấu hình đóng gói Docker cho Web
+├── docs/                       # 📚 Tài liệu Kỹ nghệ Phần mềm (SE Documentation)
+│   ├── requirements/           # Đặc tả yêu cầu (SRS, Use-case)
+│   ├── diagrams/               # Sơ đồ UML (Activity, Sequence, Class, Deployment)
+│   ├── architecture/           # Tài liệu kiến trúc và Quyết định kiến trúc (ADRs)
+│   └── traceability-matrix.md  # Ma trận truy vết (Traceability Matrix)
+├── tests/                      # 🧪 Kịch bản kiểm thử (Integration & E2E Tests)
+├── .github/workflows/          # 🤖 Cấu hình CI/CD Pipeline (GitHub Actions)
+│   ├── ci.yml                  # Pipeline Tích hợp liên tục (Install, Lint, Test, Build)
+│   └── cd.yml                  # Pipeline Phân phối liên tục (Build Image, Deploy Render)
+├── docker-compose.yml          # Cấu hình triển khai cục bộ (Local Development)
+├── .env.example                # Mẫu biến môi trường (KHÔNG chứa thông tin nhạy cảm)
+└── README.md                   # Tài liệu hướng dẫn sử dụng dự án
