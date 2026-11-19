@@ -4,7 +4,10 @@ import { DataSource } from 'typeorm';
 import { buildDataSource } from '../config/database.config.js';
 import { Product } from './entities/product.entity.js';
 import { Topping } from './entities/topping.entity.js';
-import { seedDatabase } from './seed/seed.js';
+import {
+  seedConfiguredStaffAccount,
+  seedDatabase,
+} from './seed/seed.js';
 
 /** Chuẩn bị database trước khi API mở cổng nhận request trên Render Free. */
 export async function prepareProductionDatabase(
@@ -35,6 +38,7 @@ export async function prepareProductionDatabase(
       // Lệnh seed thông thường đặt lại tồn kho và tạo lại các bản ghi size.
       // Bỏ qua seed khi catalog đã có dữ liệu để giữ nguyên dữ liệu sau restart.
       console.log('[startup] Giữ nguyên catalog hiện có, bỏ qua seed.');
+      await seedConfiguredStaffAccount(dataSource);
     }
   } finally {
     try {

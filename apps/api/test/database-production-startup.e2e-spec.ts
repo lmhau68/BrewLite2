@@ -2,9 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { DataSource, MigrationInterface, QueryRunner } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildDataSourceOptions } from '../src/config/database.config.js';
-import { Product } from '../src/database/entities/product.entity.js';
-import { ProductSize } from '../src/database/entities/product-size.entity.js';
-import { Topping } from '../src/database/entities/topping.entity.js';
+import {
+  Product,
+  ProductSize,
+  Topping,
+  User,
+  UserRole,
+} from '../src/database/entities/index.js';
 import { migrations } from '../src/database/migrations/index.js';
 import { prepareProductionDatabase } from '../src/database/prepare-production.js';
 import { SEED_PRODUCTS, SEED_TOPPINGS } from '../src/database/seed/data.js';
@@ -112,6 +116,27 @@ describe.skipIf(!databaseUrl)('Chuẩn bị database trên Render Free', () => {
         await first.getRepository(ProductSize).find({ order: { id: 'ASC' } })
       ).map((size) => size.id),
     ).toEqual(sizeIds);
+  });
+
+  it('tạo tài khoản nhân viên cấu hình khi catalog đã có dữ liệu', async () => {
+    await prepareProductionDatabase(first);
+    vi.stubEnv('SEED_STAFF_EMAIL', 'render-staff@example.com');
+    vi.stubEnv('SEED_STAFF_PASSWORD', 'RenderStaffTestPassword123');
+    vi.stubEnv('SEED_STAFF_NAME', 'Render Staff');
+
+    try {
+      await prepareProductionDatabase(first);
+
+      const staff = await first
+        .getRepository(User)
+        .findOneByOrFail({ email: 'render-staff@example.com' });
+      expect(staff.role).toBe(UserRole.STAFF);
+      expect(staff.fullName).toBe('Render Staff');
+    } finally {
+      vi.stubEnv('SEED_STAFF_EMAIL', '');
+      vi.stubEnv('SEED_STAFF_PASSWORD', '');
+      vi.stubEnv('SEED_STAFF_NAME', '');
+    }
   });
 
   it('dừng khi migration thất bại và giải phóng khóa để có thể thử lại', async () => {

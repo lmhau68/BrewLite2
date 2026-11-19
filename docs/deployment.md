@@ -78,17 +78,23 @@ Các biến môi trường của API:
 | `DB_MIGRATIONS_RUN` | `false` |
 | `DB_LOGGING` | `false` |
 | `MOCK_PAYMENT_OUTCOME` | `SUCCESS`, `FAILED` hoặc `TIMEOUT` theo kịch bản demo |
-| `SEED_STAFF_EMAIL` | Email nhân viên demo nếu cần tạo tài khoản ban đầu |
-| `SEED_STAFF_PASSWORD` | Mật khẩu nhân viên demo, cấu hình cùng email trước lần khởi động đầu |
+| `SEED_STAFF_EMAIL` | Email chưa được dùng cho tài khoản khác; cấu hình để tạo tài khoản nhân viên |
+| `SEED_STAFF_PASSWORD` | Mật khẩu nhân viên demo (tối thiểu 8 ký tự), cấu hình cùng email |
 | `SEED_STAFF_NAME` | Tên nhân viên demo nếu cần |
 
 API đọc `PORT` do Render cấp và lắng nghe trên `0.0.0.0`.
 Lệnh chuẩn bị database chạy trước khi API mở cổng nhận request:
 1. Giữ advisory lock để các lần khởi động không chạy migration/seed đồng thời.
 2. Chạy migration trong transaction.
-3. Chỉ seed khi cả hai bảng `products` và `toppings` đều rỗng.
-4. Bỏ qua seed khi catalog đã có dữ liệu, giữ nguyên tồn kho và mã size.
+3. Chỉ seed catalog khi cả hai bảng `products` và `toppings` đều rỗng.
+4. Bỏ qua seed catalog khi đã có dữ liệu để giữ nguyên tồn kho và mã size; tài khoản nhân viên được seed riêng khi đã cấu hình `SEED_STAFF_*`.
 5. Giải phóng khóa rồi kết thúc; API chỉ khởi động khi lệnh trả về thành công.
+
+Để tạo tài khoản trên database Render đã có dữ liệu, đặt `SEED_STAFF_*` trong
+Environment của **API Web Service** rồi deploy/restart API bằng image có hỗ trợ
+seed tài khoản riêng. Tài khoản chỉ được tạo nếu email chưa tồn tại; nếu email
+đang thuộc tài khoản khác, quá trình chuẩn bị database sẽ báo lỗi và API không
+khởi động. Các biến này không được lấy từ `.env` trên máy chạy Docker local.
 
 Script `start-render.sh` dùng `set -eu` để dừng khi chuẩn bị database thất bại, chặn bước
 khởi động API. Render giữ phiên bản đang hoạt động khi bản mới không vượt qua

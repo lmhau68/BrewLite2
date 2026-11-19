@@ -65,7 +65,7 @@ Trình duyệt Chrome/Firefox chạy Next.js mobile-first/PWA trên điện tho�
 
 - Chỉ `api` kết nối `db` (luồng [3]) qua Internal Database URL. Danh sách Inbound IP rules của DB để trống nên không truy cập được từ Internet (NFR-04). Secret chứa chuỗi kết nối không đưa vào GitHub Actions.
 - PostgreSQL 16, managed storage 1 GB, không autoscale, không High Availability.
-- **Migration và seed** chạy khi `api` khởi động, không phải bước riêng của CD: `start-render.sh` chạy `node dist/database/prepare-production.js` rồi `exec node dist/main.js`. Script giữ advisory lock, chạy migration trong transaction, chỉ seed khi `products` và `toppings` đều rỗng, và dừng ngay nếu thất bại để API không mở cổng. Lý do: Render Free không có pre-deploy command (ADR-006).
+- **Migration và seed** chạy khi `api` khởi động, không phải bước riêng của CD: `start-render.sh` chạy `node dist/database/prepare-production.js` rồi `exec node dist/main.js`. Script giữ advisory lock, chạy migration trong transaction, chỉ seed catalog khi `products` và `toppings` đều rỗng, đồng thời seed tài khoản nhân viên đã cấu hình dù catalog đã có dữ liệu. Script dừng ngay nếu thất bại để API không mở cổng. Lý do: Render Free không có pre-deploy command (ADR-006).
 - `GET /health` chạy `SELECT 1`, trả 200 khi API và DB sẵn sàng, 503 khi mất DB.
 
 ### Z6 – CI/CD (GitHub)

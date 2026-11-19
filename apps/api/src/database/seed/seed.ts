@@ -28,6 +28,14 @@ export async function seedDatabase(dataSource: DataSource): Promise<void> {
   });
 }
 
+export async function seedConfiguredStaffAccount(
+  dataSource: DataSource,
+): Promise<void> {
+  await dataSource.transaction(async (manager) => {
+    await seedStaffAccount(manager);
+  });
+}
+
 async function seedStaffAccount(manager: EntityManager): Promise<void> {
   const configuredEmail = process.env['SEED_STAFF_EMAIL'];
   const password = process.env['SEED_STAFF_PASSWORD'];
